@@ -4,4 +4,4 @@ Hello World
 
 <img src="https://silvio27.github.io/img/2025/20250309radio.webp" width="500">
 
-[20250309](./2025/2025-03-09.md)
+[202503](./2025/2025-03.md)
