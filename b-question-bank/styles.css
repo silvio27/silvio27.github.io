@@ -429,3 +429,22 @@ kbd, .key-hint { display: inline-block; padding: 1px 6px; border: 1px solid var(
   .app-shell { padding: 0; }
   .card { box-shadow: none; border: 0; }
 }
+
+/* ===== 题干标记：关键内容标红 ===== */
+.question-text, .study-list-q, .r-title { user-select: text; -webkit-user-select: text; }
+.qmark { background: transparent; color: #dc2626; font-weight: 700; padding: 0 1px; border-radius: 3px; cursor: pointer; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.qmark:hover { background: #fee2e2; }
+.mark-toggle { border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.mark-toggle.on { color: #dc2626; border-color: #fca5a5; background: #fef2f2; }
+.mark-toggle:hover { border-color: var(--primary); }
+.mark-toolbar { position: fixed; z-index: 9999; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #0f172a; color: #e2e8f0; border-radius: 10px; box-shadow: 0 10px 30px rgba(15, 23, 42, .35); font-size: 13px; }
+.mark-toolbar[hidden] { display: none !important; }
+.mark-toolbar .mt-hint { color: #cbd5e1; white-space: nowrap; }
+.mt-btn { border: 1px solid #475569; background: #1e293b; color: #e2e8f0; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.mt-btn.primary { background: #dc2626; border-color: #dc2626; color: #fff; }
+.mt-btn.primary:hover { background: #b91c1c; }
+.mt-btn:hover { filter: brightness(1.15); }
+@media (max-width: 940px) {
+  .mark-toolbar { left: 8px !important; right: 8px; justify-content: center; flex-wrap: wrap; }
+  .mark-toggle { font-size: 11px; padding: 6px 8px; }
+}
