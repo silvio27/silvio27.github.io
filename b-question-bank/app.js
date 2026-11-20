@@ -257,12 +257,14 @@
   }
 
   // 解析区：默认收起，点击展开；只有该题有解析且有解析价值时才显示
-  function explanationHTML(q) {
+  // defaultOpen 为 true 时默认展开（速览、答题后），用户手动收起过则以其操作为准
+  function explanationHTML(q, defaultOpen) {
     const text = EXPLANATIONS[q.id];
     if (!text) return '';
-    const open = !!(session && session.explOpen && session.explOpen[q.id]);
+    const box = session && session.explOpen;
+    const open = box && Object.prototype.hasOwnProperty.call(box, q.id) ? !!box[q.id] : !!defaultOpen;
     return `<div class="explanation ${open ? 'open' : ''}">
-      <button class="expl-toggle" data-action="toggle-expl" data-id="${esc(q.id)}">${open ? '收起解析 ▴' : '查看解析 ▾'}</button>
+      <button class="expl-toggle" data-action="toggle-expl" data-id="${esc(q.id)}" data-open="${open ? '1' : '0'}">${open ? '收起解析 ▴' : '查看解析 ▾'}</button>
       ${open ? `<div class="expl-body">${esc(text)}</div>` : ''}
     </div>`;
   }
@@ -533,7 +535,7 @@
         ${questionRowHTML(q, detailFlagHTML(q))}
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
         <div class="options no-letter">${optionsHTML}</div>
-        ${explanationHTML(q)}
+        ${submitted ? explanationHTML(q, true) : ''}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
             <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
@@ -638,7 +640,7 @@
       ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
       ${revealed
         ? `<div class="options">${optionsHTML}</div>
-           ${explanationHTML(q)}`
+           ${explanationHTML(q, true)}`
         : `<div class="recall-hint">
              <b>先自己想一想</b>，想好了再揭晓 —— 回忆过的题记得更牢。
              <span>按 <kbd>空格</kbd> 揭晓答案</span>
@@ -691,9 +693,9 @@
     const rows = items.map((qid, i) => {
       const q = QMAP.get(qid);
       if (!q) return '';
-      // 正确答案按选项逐行展示（A/B/C 各占一行，便于扫读）
+      // 正确答案逐行展示；选项已被打乱，字母不再有固定含义，故不显示 A/B/C/D
       const answerList = (q.dispAnswer || []).map(l =>
-        `<div class="al-item"><span class="ol">${l}</span><span class="at">${esc(q.disp[l])}</span></div>`).join('');
+        `<div class="al-item"><span class="at">${esc(q.disp[l])}</span></div>`).join('');
       return `<article class="study-list-item">
         <div class="study-list-qrow">
           <div class="study-list-qline">
@@ -705,7 +707,7 @@
         ${q.figure ? `<img class="study-list-fig" src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
         <div class="study-list-a"><div class="al-title">答案</div>${answerList}</div>
         ${othersAnswersHTML(q)}
-        ${explanationHTML(q)}
+        ${explanationHTML(q, true)}
       </article>`;
     }).join('');
     return `<section class="card study-list">
@@ -1162,7 +1164,8 @@ ${rows || '<p>暂无错题</p>'}
     if (action === 'toggle-expl') {
       if (!session) return;
       if (!session.explOpen) session.explOpen = {};
-      session.explOpen[el.dataset.id] = !session.explOpen[el.dataset.id];
+      // 以按钮上的当前状态取反，兼容"默认展开"的场景
+      session.explOpen[el.dataset.id] = el.dataset.open !== '1';
       render(); return;
     }
     if (action === 'toggle-detail') {
