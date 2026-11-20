@@ -149,6 +149,32 @@ select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px 
 .tag.amber { background: var(--warning-soft); border-color: #fde68a; color: var(--warning); }
 .tag.red { background: var(--danger-soft); border-color: #fecaca; color: var(--danger); }
 
+.fold-btn {
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--primary);
+  border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.fold-btn:hover { background: var(--primary-soft); }
+
+.type-badge {
+  font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid; display: inline-flex; align-items: center;
+}
+.type-badge.single { background: var(--primary-soft); border-color: #bfdbfe; color: var(--primary-dark); }
+.type-badge.multi { background: #faf5ff; border-color: #e9d5ff; color: #7e22ce; }
+
+.submit-hint { font-size: 13px; color: var(--muted); align-self: center; }
+
+/* 刷题模式：隐藏 A/B/C/D 字母，只展示选项文字 */
+.options.no-letter .option { padding-left: 16px; }
+.options.no-letter .option .letter { display: none; }
+
+.mode-card.study { background: linear-gradient(135deg, #f0fdf4, #ecfdf5); border-color: #a7f3d0; }
+.mode-card.study .icon { background: var(--success); color: white; }
+.study-card .option { cursor: default; }
+.study-card .option:hover { border-color: #34d399; }
+.study-answer { margin-top: 16px; }
+.study-answer .answer-line { font-size: 18px; letter-spacing: 4px; }
+
 .question-text { font-size: 17px; font-weight: 650; line-height: 1.75; margin: 4px 0 16px; white-space: pre-wrap; }
 .figure-wrap {
   margin: 4px 0 18px; padding: 14px; border: 1px dashed var(--border-strong);
@@ -170,12 +196,21 @@ select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px 
 .option.selected { border-color: var(--primary); background: var(--primary-soft); }
 .option.selected .letter { background: var(--primary); border-color: var(--primary); color: white; }
 .option.locked { cursor: default; }
-.option.is-correct { border-color: #86efac; background: var(--success-soft); }
+/* 正确答案一律绿色：选中答对为实心绿，漏选为绿色描边 */
+.option.is-answer { border-color: #34d399; background: var(--success-soft); }
+.option.is-answer .letter { background: var(--success); border-color: var(--success); color: white; }
+.option.is-correct { border-color: var(--success); background: #d1fae5; box-shadow: inset 0 0 0 1px var(--success); }
 .option.is-correct .letter { background: var(--success); border-color: var(--success); color: white; }
+.option.is-missed { border-color: var(--success); background: var(--success-soft); border-style: dashed; }
+.option.is-missed .letter { background: var(--success); border-color: var(--success); color: white; }
 .option.is-wrong { border-color: #fca5a5; background: var(--danger-soft); }
 .option.is-wrong .letter { background: var(--danger); border-color: var(--danger); color: white; }
-.option.is-missed { border-color: #fcd34d; background: var(--warning-soft); }
-.option.is-missed .letter { background: var(--warning); border-color: var(--warning); color: white; }
+.answer-flag {
+  display: inline-block; margin-left: 8px; font-size: 11px; font-weight: 700;
+  color: #065f46; background: #a7f3d0; border: 1px solid #34d399;
+  padding: 1px 7px; border-radius: 999px; vertical-align: middle;
+}
+.answer-text { color: #065f46; font-weight: 600; }
 .feedback { margin-top: 16px; border-radius: 12px; padding: 14px 16px; border: 1px solid; }
 .feedback.ok { background: var(--success-soft); border-color: #a7f3d0; }
 .feedback.no { background: var(--danger-soft); border-color: #fecaca; }
@@ -232,6 +267,14 @@ td .sub-cell { color: var(--muted); font-size: 12px; }
 .completion { text-align: center; padding: 30px 20px; }
 .completion .score { font-size: 46px; font-weight: 800; color: var(--primary); line-height: 1.2; }
 
+/* 聚焦答题：折叠上方内容，让题目尽量上移 */
+body.focus-mode .topbar,
+body.focus-mode .sidebar { display: none; }
+body.focus-mode .layout { grid-template-columns: 1fr; }
+body.focus-mode .app-shell { padding-top: 8px; }
+body.focus-mode .practice-bar { padding: 10px 16px; }
+body.focus-mode .question-card { padding-top: 12px; }
+
 @media (max-width: 940px) {
   .app-shell { padding: 14px; }
   .layout { grid-template-columns: 1fr; }
@@ -274,6 +317,10 @@ td .sub-cell { color: var(--muted); font-size: 12px; }
   }
   .practice-bar-top h2 { font-size: 16px; }
   .tag { font-size: 11px; padding: 3px 8px; }
+  .fold-btn { font-size: 12px; padding: 4px 10px; }
+  .type-badge { font-size: 11px; padding: 4px 9px; }
+  .answer-flag { font-size: 10px; margin-left: 5px; padding: 1px 5px; }
+  .submit-hint { font-size: 12px; }
   table { font-size: 13px; }
   th, td { padding: 9px 8px; }
   .bar-row { grid-template-columns: 68px 1fr 76px; gap: 6px; }

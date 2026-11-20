@@ -29,7 +29,8 @@
   let state = loadState();
   let session = null;
   let view = 'home';
-  const ui = { wrongFilter: 'active', wrongQuery: '', searchQuery: '' };
+  let autoSubmitTimer = null;
+  const ui = { wrongFilter: 'active', wrongQuery: '', searchQuery: '', focusMode: false };
 
   function loadState() {
     try {
@@ -112,6 +113,7 @@
     document.querySelectorAll('.nav-item').forEach(el => {
       el.classList.toggle('active', el.dataset.view === view);
     });
+    document.body.classList.toggle('focus-mode', view === 'practice' && !!ui.focusMode);
     const attempted = Object.values(state.records).filter(r => r.attempts > 0).length;
     const totalCorrect = Object.values(state.records).reduce((s, r) => s + r.correct, 0);
     const totalWrong = Object.values(state.records).reduce((s, r) => s + r.wrong, 0);
@@ -153,6 +155,9 @@
         <button class="mode-card" data-action="start" data-mode="wrong">
           <div class="icon">⚑</div><h3>错题重练</h3><p>只练错题库中的待复习题目，答对两次自动标记掌握。</p><span class="mode-tag">待复习 ${wrongIds().length} 题</span>
         </button>
+        <button class="mode-card study" data-action="start" data-mode="study">
+          <div class="icon">◉</div><h3>学习模式</h3><p>只看题目和正确答案，逐题浏览记忆，不判分、不进错题库。</p><span class="mode-tag">背题速览 · 直接看答案</span>
+        </button>
         <button class="mode-card" data-action="nav" data-view="search">
           <div class="icon">⌕</div><h3>题目检索</h3><p>按题干、选项、题号或章节快速定位单题。</p><span class="mode-tag">单题精练</span>
         </button>
@@ -188,6 +193,7 @@
       </div></section></div>`;
     }
     if (session.pos >= session.ids.length) return renderCompletion();
+    if (session.mode === 'study') return renderStudy();
 
     const qid = session.ids[session.pos];
     const q = QMAP.get(qid);
@@ -199,6 +205,7 @@
     const answered = Object.keys(session.submitted).length;
     const percent = session.ids.length ? Math.round(answered / session.ids.length * 100) : 0;
 
+    const isMulti = q.type === 'multiple';
     const optionsHTML = LETTERS.map(letter => {
       let cls = 'option';
       if (selected.includes(letter)) cls += ' selected';
@@ -206,12 +213,15 @@
         cls += ' locked';
         const isAnswer = q.answer.includes(letter);
         const isSelected = selected.includes(letter);
+        if (isAnswer) cls += ' is-answer';
         if (isAnswer && isSelected) cls += ' is-correct';
         else if (isAnswer && !isSelected) cls += ' is-missed';
         else if (!isAnswer && isSelected) cls += ' is-wrong';
       }
+      const mark = submitted && q.answer.includes(letter)
+        ? `<span class="answer-flag">✓ 正确答案</span>` : '';
       return `<button class="${cls}" data-action="toggle-option" data-letter="${letter}" ${submitted ? 'disabled' : ''}>
-        <span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}</span>
+        <span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span>
       </button>`;
     }).join('');
 
@@ -221,7 +231,7 @@
       const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
       feedbackHTML = `<div class="feedback ${correct ? 'ok' : 'no'}">
         <strong>${correct ? '✓ 回答正确' : '✕ 回答错误'}</strong>
-        <p>正确答案：<span class="answer-line">${esc(answerText(q))}</span>　${esc(answerTexts)}</p>
+        <p>正确答案：<span class="answer-line">${esc(answerText(q))}</span>　<span class="answer-text">${esc(answerTexts)}</span></p>
         ${correct ? '<p>本题已计入正确统计。</p>' : '<p>本题已自动加入错题库，可在“错题重练”中复习。</p>'}
       </div>`;
     }
@@ -235,21 +245,22 @@
             <span class="tag">本轮正确 ${session.correct}</span>
             <span class="tag red">本轮错误 ${session.wrong}</span>
             <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
+            <button class="fold-btn" data-action="toggle-focus" title="折叠/展开顶部内容">${ui.focusMode ? '展开上方 ▾' : '折叠上方 ▴'}</button>
           </div>
         </div>
         <div class="progress"><i style="width:${percent}%"></i></div>
       </section>
-      <section class="card">
+      <section class="card question-card">
         <div class="tag-row" style="margin-bottom:10px">
           <span class="tag blue">${esc(q.id)}</span>
           <span class="tag">章节 ${esc(q.section)}</span>
-          <span class="tag ${q.type === 'multiple' ? 'amber' : ''}">${q.type === 'multiple' ? '多选题 · 请选择所有正确项' : '单选题'}</span>
+          <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题 · 可多选，全部选对才得分' : '◉ 单选题 · 点击选项自动提交'}</span>
           ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
           ${rec && rec.wrongCount ? `<span class="tag red">历史错误 ${rec.wrongCount} 次</span>` : ''}
         </div>
         <div class="question-text">${esc(q.question)}</div>
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
-        <div class="options">${optionsHTML}</div>
+        <div class="options no-letter">${optionsHTML}</div>
         ${feedbackHTML}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
@@ -259,7 +270,66 @@
           <div class="btn-row">
             ${submitted
               ? `<button class="btn primary" data-action="next">${session.pos === session.ids.length - 1 ? '查看本轮结果' : '下一题 →'}</button>`
-              : `<button class="btn primary" data-action="submit">提交答案</button>`}
+              : (isMulti
+                  ? `<button class="btn primary" data-action="submit">提交答案（已选 ${selected.length}）</button>`
+                  : `<span class="submit-hint">点击选项即可作答</span>`)}
+          </div>
+        </div>
+      </section>
+    </div>`;
+  }
+
+  function renderStudy() {
+    const qid = session.ids[session.pos];
+    const q = QMAP.get(qid);
+    if (!q) return '<div class="card">题目数据异常</div>';
+    const rec = getRec(qid);
+    const isMulti = q.type === 'multiple';
+    const percent = session.ids.length ? Math.round((session.pos + 1) / session.ids.length * 100) : 0;
+
+    const optionsHTML = LETTERS.map(letter => {
+      const isAnswer = q.answer.includes(letter);
+      const cls = 'option locked' + (isAnswer ? ' is-answer is-correct' : '');
+      const mark = isAnswer ? `<span class="answer-flag">✓ 正确答案</span>` : '';
+      return `<div class="${cls}">
+        <span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span>
+      </div>`;
+    }).join('');
+
+    const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
+
+    return `<div class="view">
+      <section class="card practice-bar">
+        <div class="practice-bar-top">
+          <h2>学习模式 · 背题速览</h2>
+          <div class="tag-row">
+            <span class="tag blue">第 ${session.pos + 1} / ${session.ids.length} 题</span>
+            <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
+            <button class="fold-btn" data-action="toggle-focus" title="折叠/展开顶部内容">${ui.focusMode ? '展开上方 ▾' : '折叠上方 ▴'}</button>
+          </div>
+        </div>
+        <div class="progress"><i style="width:${percent}%"></i></div>
+      </section>
+      <section class="card question-card study-card">
+        <div class="tag-row" style="margin-bottom:10px">
+          <span class="tag blue">${esc(q.id)}</span>
+          <span class="tag">章节 ${esc(q.section)}</span>
+          <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题' : '◉ 单选题'}</span>
+          ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
+        </div>
+        <div class="question-text">${esc(q.question)}</div>
+        ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
+        <div class="options">${optionsHTML}</div>
+        <div class="feedback ok study-answer">
+          <strong>正确答案：<span class="answer-line">${esc(answerText(q))}</span></strong>
+          <p class="answer-text">${esc(answerTexts)}</p>
+        </div>
+        <div class="btn-row spread practice-actions" style="margin-top:20px">
+          <div class="btn-row">
+            <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn primary" data-action="next">${session.pos === session.ids.length - 1 ? '完成浏览 ✓' : '下一题 →'}</button>
           </div>
         </div>
       </section>
@@ -267,6 +337,19 @@
   }
 
   function renderCompletion() {
+    if (session.mode === 'study') {
+      return `<div class="view"><section class="card">
+        <div class="completion">
+          <div class="big" style="font-size:36px">✓</div>
+          <h2 style="margin:6px 0">学习模式浏览完成</h2>
+          <p class="section-note">共浏览 ${session.ids.length} 道题。学习模式只看题目和正确答案，不计分、不进错题库。</p>
+          <div class="btn-row" style="justify-content:center;margin-top:20px">
+            <button class="btn primary" data-action="completion-retry">再浏览一轮</button>
+            <button class="btn ghost" data-action="completion-home">返回首页</button>
+          </div>
+        </div>
+      </section></div>`;
+    }
     const total = session.correct + session.wrong;
     const rate = total ? Math.round(session.correct / total * 100) : 0;
     return `<div class="view"><section class="card">
@@ -440,6 +523,7 @@
       title = section;
       ids = QUESTIONS.filter(q => q.section === section).map(q => q.id);
     } else if (mode === 'wrong') ids = wrongIds();
+    else if (mode === 'study') ids = opts.ids || ALL_IDS.slice();
     else if (mode === 'review') ids = opts.ids || (opts.id ? [opts.id] : []);
     if (!ids.length) { toast(mode === 'wrong' ? '错题库暂无待复习题目' : '没有可练习的题目'); return; }
     session = { mode, title, ids, pos: 0, selected: {}, submitted: {}, answers: {}, correct: 0, wrong: 0, skipped: 0 };
@@ -450,22 +534,31 @@
 
   function toggleOption(letter) {
     if (!session || session.pos >= session.ids.length) return;
+    if (session.mode === 'study') return;
     const qid = session.ids[session.pos];
     if (session.submitted[qid]) return;
     const q = QMAP.get(qid);
     const cur = (session.selected[qid] || []).slice();
     if (q.type === 'single') {
       session.selected[qid] = [letter];
-    } else {
-      const i = cur.indexOf(letter);
-      if (i >= 0) cur.splice(i, 1); else cur.push(letter);
-      session.selected[qid] = LETTERS.filter(l => cur.includes(l));
+      render();
+      if (autoSubmitTimer) clearTimeout(autoSubmitTimer);
+      autoSubmitTimer = setTimeout(() => {
+        autoSubmitTimer = null;
+        if (!session || session.ids[session.pos] !== qid || session.submitted[qid]) return;
+        submitAnswer();
+      }, 220);
+      return;
     }
+    const i = cur.indexOf(letter);
+    if (i >= 0) cur.splice(i, 1); else cur.push(letter);
+    session.selected[qid] = LETTERS.filter(l => cur.includes(l));
     render();
   }
 
   function submitAnswer() {
     if (!session || session.pos >= session.ids.length) return;
+    if (session.mode === 'study') return;
     const qid = session.ids[session.pos],
       q = QMAP.get(qid),
       sel = session.selected[qid] || [];
@@ -599,13 +692,14 @@ ${rows || '<p>暂无错题</p>'}
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const action = el.dataset.action;
+    if (action === 'toggle-focus') { ui.focusMode = !ui.focusMode; render(); return; }
     if (action === 'nav') { view = el.dataset.view; render(); }
     else if (action === 'start') startSession(el.dataset.mode, { section: el.dataset.section });
     else if (action === 'toggle-option') toggleOption(el.dataset.letter);
     else if (action === 'submit') submitAnswer();
-    else if (action === 'next') { session.pos++; render(); }
-    else if (action === 'prev') { session.pos = Math.max(0, session.pos - 1); render(); }
-    else if (action === 'skip') { session.skipped++; session.pos++; render(); }
+    else if (action === 'next') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos++; render(); }
+    else if (action === 'prev') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos = Math.max(0, session.pos - 1); render(); }
+    else if (action === 'skip') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.skipped++; session.pos++; render(); }
     else if (action === 'star') {
       if (!session || session.pos >= session.ids.length) return;
       const rec = ensureRec(session.ids[session.pos]);
@@ -667,6 +761,11 @@ ${rows || '<p>暂无错题</p>'}
     if (view !== 'practice' || !session || session.pos >= session.ids.length) return;
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
     const k = e.key.toLowerCase();
+    if (session.mode === 'study') {
+      if (k === 'enter' || k === 'arrowright') { e.preventDefault(); if (session.pos < session.ids.length - 1) { session.pos++; render(); } }
+      else if (k === 'arrowleft') { e.preventDefault(); session.pos = Math.max(0, session.pos - 1); render(); }
+      return;
+    }
     const idx = LETTERS.indexOf(k.toUpperCase());
     if (idx >= 0) { e.preventDefault(); toggleOption(LETTERS[idx]); }
     else if (k === 'enter') { e.preventDefault(); if (!session.submitted[session.ids[session.pos]]) submitAnswer(); else { session.pos++; render(); } }
