@@ -110,6 +110,50 @@ a { color: var(--primary); text-decoration: none; }
 .mode-card p { margin: 0; color: var(--muted); font-size: 13px; }
 .mode-card .mode-tag { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--primary); font-weight: 700; }
 
+/* 四步学习路线 */
+.road-dashboard { padding: 18px 22px; }
+.dash-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.dash-grid > div { display: grid; gap: 2px; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; }
+.dash-grid span { font-size: 12px; color: var(--muted); }
+.dash-grid b { font-size: 18px; }
+.road-track { display: flex; align-items: center; margin: 18px 2px 14px; }
+.road-node {
+  width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; border: 2px solid var(--border-strong); color: var(--muted); background: var(--surface);
+}
+.road-node.done { background: var(--success); border-color: var(--success); color: white; }
+.road-node.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 0 0 4px var(--primary-soft); }
+.road-line { flex: 1; height: 2px; background: var(--border-strong); }
+.road-line.done { background: var(--success); }
+.next-up {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 10px; background: var(--primary-soft); border: 1px solid #bfdbfe;
+}
+.next-label { font-size: 12px; font-weight: 700; color: var(--primary-dark); background: var(--surface); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.next-text { font-size: 13px; color: var(--text); flex: 1; min-width: 180px; }
+.roadmap { display: grid; gap: 12px; }
+.road-step {
+  display: flex; gap: 14px; align-items: flex-start; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow);
+}
+.road-step.active { border-color: #93c5fd; box-shadow: 0 0 0 3px var(--primary-soft), var(--shadow); }
+.road-step.done { opacity: .82; }
+.step-num {
+  width: 34px; height: 34px; flex: none; border-radius: 10px; display: grid; place-items: center;
+  background: var(--surface-2); color: var(--muted); font-size: 17px; font-weight: 800;
+}
+.road-step.active .step-num { background: var(--primary); color: white; }
+.road-step.done .step-num { background: var(--success); color: white; }
+.step-body { flex: 1; min-width: 0; }
+.step-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.step-head h3 { margin: 0; font-size: 16px; }
+.step-status { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.step-status.active { background: var(--primary-soft); color: var(--primary-dark); }
+.step-status.done { background: var(--success-soft); color: var(--success); }
+.step-body > p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.step-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.step-data { font-size: 12px; color: var(--muted); }
+
 .btn {
   border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
   border-radius: 10px; padding: 9px 16px; font-size: 14px; font-weight: 600; transition: .15s ease;
@@ -309,6 +353,13 @@ kbd, .key-hint { display: inline-block; padding: 1px 6px; border: 1px solid var(
   .study-seg-btn { flex: 1; padding: 8px 4px; font-size: 12px; }
   .recall-hint { padding: 14px; font-size: 13px; }
   .study-list-q { font-size: 14px; }
+  .dash-grid { grid-template-columns: repeat(2, 1fr); }
+  .road-step { padding: 14px; gap: 10px; }
+  .step-num { width: 28px; height: 28px; font-size: 14px; }
+  .step-foot .btn-row { width: 100%; }
+  .step-foot .btn-row .btn { flex: 1; text-align: center; }
+  .next-up { gap: 8px; }
+  .next-up .btn { width: 100%; }
 }
 @media (max-width: 640px) {
   .app-shell { padding: 10px; }

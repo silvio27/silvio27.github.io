@@ -88,6 +88,10 @@
       .sort((a, b) => new Date(state.records[b].lastAt || 0) - new Date(state.records[a].lastAt || 0));
   }
 
+  // 智能练习：连续答对 2 次及以上视为已掌握，自动跳过
+  function isMastered(id) { return ((state.records[id] || {}).streak || 0) >= 2; }
+  function smartIds() { return ALL_IDS.filter(id => !isMastered(id)); }
+
   function toast(msg) {
     const el = document.getElementById('toast');
     el.textContent = msg;
@@ -151,40 +155,104 @@
   }
 
   function renderHome() {
+    const recs = Object.values(state.records);
+    const attempted = recs.filter(r => (r.attempts || 0) > 0).length;
+    const totalAns = recs.reduce((s, r) => s + (r.attempts || 0), 0);
+    const totalCorrect = recs.reduce((s, r) => s + (r.correct || 0), 0);
+    const acc = totalAns ? Math.round(totalCorrect / totalAns * 100) : null;
+    const wrongN = wrongIds().length;
+    const everWrong = recs.filter(r => (r.wrongCount || 0) > 0).length;
+    const masteredN = ALL_IDS.length - smartIds().length;
+    const skimmed = !!(state.study && state.study.skimmed);
+
+    const s1 = skimmed ? 'done' : (attempted ? 'todo' : 'active');
+    const s2 = attempted >= META.total ? 'done' : (attempted ? 'active' : 'todo');
+    const s3 = (everWrong && !wrongN) ? 'done' : (wrongN ? 'active' : 'todo');
+    const s4 = (s1 === 'done' && s2 === 'done' && s3 === 'done') ? 'active' : 'todo';
+
+    let recN = 1;
+    if (skimmed) recN = 2;
+    if (attempted >= META.total) recN = wrongN ? 3 : 4;
+    else if (wrongN >= 5 && attempted > 0) recN = 3;
+    const recText = {
+      1: '先花十几分钟速览一遍，知道考什么、答案长什么样，不用刻意记。',
+      2: '按智能练习顺序刷题，答对两次的题会自动移出，越刷越少。',
+      3: `错题库还有 ${wrongN} 题待复习，连对两次就能彻底剔除。`,
+      4: '用随机练习检验真实水平，再用速览快速回顾错题和收藏。'
+    }[recN];
+    const recBtn = {
+      1: '<button class="btn primary" data-action="study-skim">去速览 →</button>',
+      2: '<button class="btn primary" data-action="start" data-mode="smart">开始智能练习 →</button>',
+      3: '<button class="btn primary" data-action="start" data-mode="wrong">清理错题 →</button>',
+      4: '<button class="btn primary" data-action="start" data-mode="random">随机检验 →</button>'
+    }[recN];
+
+    const statusText = s => s === 'done' ? '已完成 ✓' : (s === 'active' ? '现在做' : '待进行');
+    const step = (n, st, title, desc, data, btns) => `
+      <section class="road-step ${st}">
+        <div class="step-num">${n}</div>
+        <div class="step-body">
+          <div class="step-head"><h3>${title}</h3><span class="step-status ${st}">${statusText(st)}</span></div>
+          <p>${desc}</p>
+          <div class="step-foot"><div class="step-data">${data}</div><div class="btn-row">${btns}</div></div>
+        </div>
+      </section>`;
+
     return `<div class="view">
       <section class="hero">
-        <h2>开始今天的练习</h2>
-        <p>共 ${META.total} 道题，涵盖 ${SECTIONS.length} 个章节；支持单选、多选与 ${META.figures} 道附图题。答错的题会自动进入错题库。</p>
+        <h2>你的四步备考路线</h2>
+        <p>考试全是选择题、答案顺序固定。按下面四步走：先建印象，再系统刷，然后清空错题，最后随机巩固。进度自动保存，随时接着学。</p>
       </section>
-      <div class="mode-grid">
-        <button class="mode-card" data-action="start" data-mode="sequential">
-          <div class="icon">→</div><h3>顺序练习</h3><p>按题库原顺序逐题作答，适合系统通刷。</p><span class="mode-tag">从第一题开始</span>
-        </button>
-        <button class="mode-card" data-action="start" data-mode="random">
-          <div class="icon">⤨</div><h3>随机练习</h3><p>打乱全部题目，检验真实掌握程度。</p><span class="mode-tag">全库随机</span>
-        </button>
-        <button class="mode-card" data-action="start" data-mode="wrong">
-          <div class="icon">⚑</div><h3>错题重练</h3><p>只练错题库中的待复习题目，答对两次自动标记掌握。</p><span class="mode-tag">待复习 ${wrongIds().length} 题</span>
-        </button>
-        <button class="mode-card study" data-action="start" data-mode="study">
-          <div class="icon">◉</div><h3>学习模式</h3><p>先自己回忆答案再揭晓，记得更牢；也可切换速览快速通刷。不判分、不进错题库。</p><span class="mode-tag">主动回忆 · 速览 · 自动续学</span>
-        </button>
-        <button class="mode-card" data-action="nav" data-view="search">
-          <div class="icon">⌕</div><h3>题目检索</h3><p>按题干、选项、题号或章节快速定位单题。</p><span class="mode-tag">单题精练</span>
-        </button>
+
+      <section class="card road-dashboard">
+        <div class="dash-grid">
+          <div><span>速览</span><b style="color:${skimmed ? 'var(--success)' : 'var(--muted)'}">${skimmed ? '已完成' : '未开始'}</b></div>
+          <div><span>已练题目</span><b>${attempted} / ${META.total}</b></div>
+          <div><span>待复习错题</span><b style="color:${wrongN ? 'var(--danger)' : 'var(--success)'}">${wrongN}</b></div>
+          <div><span>已掌握</span><b style="color:var(--success)">${masteredN}</b></div>
+        </div>
+        <div class="road-track">
+          ${[s1, s2, s3, s4].map((st, i) => `<span class="road-node ${st}">${i + 1}</span>${i < 3 ? `<i class="road-line ${st === 'done' ? 'done' : ''}"></i>` : ''}`).join('')}
+        </div>
+        <div class="next-up">
+          <span class="next-label">下一步建议</span>
+          <span class="next-text">${recText}</span>
+          ${recBtn}
+        </div>
+      </section>
+
+      <div class="roadmap">
+        ${step(1, s1, '速览一遍 · 建立印象', '一页 20 题滚动看题干和答案，只求眼熟、不求记住。先扫一遍，后面刷题会快很多。', `共 ${Math.ceil(META.total / 20)} 页 · ${skimmed ? '已开始' : '未开始'}`, `
+          <button class="btn primary" data-action="study-skim">进入速览 →</button>
+          <button class="btn" data-action="start" data-mode="study">卡片背题</button>`)}
+        ${step(2, s2, '系统刷题 · 主力', '智能练习自动跳过已掌握的题，只练还没拿下的。单选点一下自动提交，多选选完提交；答错自动进错题库。', `已练 ${attempted} 题 · 正确率 ${acc === null ? '—' : acc + '%'}`, `
+          <button class="btn primary" data-action="start" data-mode="smart">智能练习 →</button>
+          <button class="btn" data-action="start" data-mode="sequential">完整顺序</button>`)}
+        ${step(3, s3, '清空错题 · 剔除不会的', '只练错题库里的题，连续答对两次自动标记“已掌握”并移出。这样剔除可靠，不会把蒙对的当会做。', `待复习 ${wrongN} 题 · 曾错 ${everWrong} 题`, `
+          <button class="btn ${wrongN ? 'primary' : ''}" data-action="start" data-mode="wrong" ${wrongN ? '' : 'disabled'}>${wrongN ? '错题重练 →' : '暂无错题'}</button>`)}
+        ${step(4, s4, '考前巩固 · 随机检验', '随机打乱全库检验真实水平，再用速览快速回顾错题和收藏。答案顺序不变，刷题时形成的眼熟感这时最管用。', `全库 ${META.total} 题随机`, `
+          <button class="btn primary" data-action="start" data-mode="random">随机练习 →</button>
+          <button class="btn" data-action="study-skim">速览回顾</button>`)}
       </div>
+
       <section class="card">
-        <div class="card-header"><div><h2>按章节练习</h2><p>选择教材章节，只练该考点下的题目</p></div></div>
-        <div class="inline-form">
-          <div class="field"><label for="chapterSelect">章节</label>
+        <div class="card-header"><div><h2>按需工具</h2><p>不在主路线上，需要时再用</p></div></div>
+        <div class="btn-row">
+          <button class="btn" data-action="nav" data-view="search">题目检索</button>
+          <button class="btn" data-action="nav" data-view="stats">学习统计</button>
+          <button class="btn" data-action="nav" data-view="wrong">错题库</button>
+        </div>
+        <div class="inline-form" style="margin-top:16px">
+          <div class="field"><label for="chapterSelect">按章节练习</label>
             <select id="chapterSelect">${SECTIONS.map(s => {
               const n = QUESTIONS.filter(q => q.section === s).length;
               return `<option value="${esc(s)}">${esc(s)} · ${n} 题</option>`;
             }).join('')}</select>
           </div>
-          <button class="btn primary" data-action="start" data-mode="chapter">开始本章练习</button>
+          <button class="btn" data-action="start" data-mode="chapter">开始本章练习</button>
         </div>
       </section>
+
       <section class="card">
         <div class="card-header"><div><h2>数据管理</h2><p>进度与错题保存在本机浏览器；可导出备份后在其他设备导入</p></div></div>
         <div class="btn-row">
@@ -608,6 +676,7 @@
     opts = opts || {};
     let ids = [], title = '';
     if (mode === 'sequential') ids = ALL_IDS.slice();
+    else if (mode === 'smart') ids = smartIds();
     else if (mode === 'random') ids = shuffle(ALL_IDS.slice());
     else if (mode === 'chapter') {
       const sel = document.getElementById('chapterSelect');
@@ -802,9 +871,19 @@ ${rows || '<p>暂无错题</p>'}
     if (!el) return;
     const action = el.dataset.action;
     if (action === 'toggle-focus') { ui.focusMode = !ui.focusMode; render(); return; }
+    if (action === 'study-skim') {
+      startSession('study');
+      ui.studyView = 'list'; ui.studyPage = 0;
+      if (state.study) { state.study.view = 'list'; state.study.skimmed = true; saveState(); }
+      render(); return;
+    }
     if (action === 'study-view') {
       ui.studyView = el.dataset.view; ui.studyPage = 0;
-      if (state.study) { state.study.view = ui.studyView; saveState(); }
+      if (state.study) {
+        state.study.view = ui.studyView;
+        if (ui.studyView === 'list') state.study.skimmed = true;
+        saveState();
+      }
       render(); return;
     }
     if (action === 'study-scope') {
