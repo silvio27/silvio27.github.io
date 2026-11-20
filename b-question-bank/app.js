@@ -21,6 +21,7 @@
   });
   const STORAGE_KEY = 'bquiz_state_v1';
   const LETTERS = ['A', 'B', 'C', 'D'];
+  const EXPLANATIONS = window.QUESTION_EXPLANATIONS || {};
   const INLINE_IMAGES = window.QUESTION_IMAGES || {};
   function figureSrc(name) {
     return INLINE_IMAGES[name] || ('images/' + encodeURIComponent(name));
@@ -53,11 +54,12 @@
           if (!parsed.study) parsed.study = { pos: 0, view: 'card', scope: 'all' };
           if (!parsed.marks || typeof parsed.marks !== 'object' || Array.isArray(parsed.marks)) parsed.marks = {};
           if (typeof parsed.showMarks !== 'boolean') parsed.showMarks = true;
+          if (!parsed.detailFlags || typeof parsed.detailFlags !== 'object' || Array.isArray(parsed.detailFlags)) parsed.detailFlags = {};
           return parsed;
         }
       }
     } catch (e) { /* 存储不可用时退回内存 */ }
-    return { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, marks: {}, showMarks: true, updatedAt: null };
+    return { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, marks: {}, showMarks: true, detailFlags: {}, updatedAt: null };
   }
 
   function saveState() {
@@ -145,6 +147,23 @@
     }
     if (pos < text.length) html += esc(text.slice(pos));
     return html;
+  }
+
+  // 解析区：默认收起，点击展开；只有该题有解析且有解析价值时才显示
+  function explanationHTML(q) {
+    const text = EXPLANATIONS[q.id];
+    if (!text) return '';
+    const open = !!(session && session.explOpen && session.explOpen[q.id]);
+    return `<div class="explanation ${open ? 'open' : ''}">
+      <button class="expl-toggle" data-action="toggle-expl" data-id="${esc(q.id)}">${open ? '收起解析 ▴' : '查看解析 ▾'}</button>
+      ${open ? `<div class="expl-body">${esc(text)}</div>` : ''}
+    </div>`;
+  }
+
+  // 标注"需要进一步解析"（供下次生成更详细解析）
+  function detailFlagHTML(q) {
+    const on = !!(state.detailFlags && state.detailFlags[q.id]);
+    return `<button class="detail-flag ${on ? 'on' : ''}" data-action="toggle-detail" data-id="${esc(q.id)}" title="标注后，下次检查时为你生成更详细的解析">${on ? '✓ 需详细解析' : '＋ 需详细解析'}</button>`;
   }
 
   // 计算选区在某个文本容器内相对于纯文本的字符偏移
@@ -363,11 +382,18 @@
     let feedbackHTML = '';
     if (submitted) {
       const correct = selected.length === q.answer.length && selected.every(x => q.answer.includes(x));
-      const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
+      // 正确答案文字不再重复字母前缀（选项区已用绿色标出正确答案）
+      const answerTexts = q.answer.map(l => q.options[l]).join('；');
+      const others = LETTERS.filter(l => !q.answer.includes(l));
+      const othersOpen = !!(session.othersOpen && session.othersOpen[qid]);
+      const othersHTML = othersOpen && others.length
+        ? `<div class="others-list">${others.map(l => `<div class="other-item"><span class="ol">${l}</span><span>${esc(q.options[l])}</span></div>`).join('')}</div>`
+        : '';
       feedbackHTML = `<div class="feedback ${correct ? 'ok' : 'no'}">
         <strong>${correct ? '✓ 回答正确' : '✕ 回答错误'}</strong>
-        <p>正确答案：<span class="answer-line">${esc(answerText(q))}</span>　<span class="answer-text">${esc(answerTexts)}</span></p>
-        ${correct ? '<p>本题已计入正确统计。</p>' : '<p>本题已自动加入错题库，可在“错题重练”中复习。</p>'}
+        <p>正确答案：<span class="answer-text">${esc(answerTexts)}</span></p>
+        ${others.length ? `<button class="others-toggle" data-action="toggle-others">${othersOpen ? '收起其他答案 ▴' : '展开其他答案 ▾'}</button>${othersHTML}` : ''}
+        ${correct ? '<p class="fb-note">本题已计入正确统计。</p>' : '<p class="fb-note">本题已自动加入错题库，可在“错题重练”中复习。</p>'}
       </div>`;
     }
 
@@ -393,11 +419,13 @@
           <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题 · 可多选，全部选对才得分' : '◉ 单选题 · 点击选项自动提交'}</span>
           ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
           ${rec && rec.wrongCount ? `<span class="tag red">历史错误 ${rec.wrongCount} 次</span>` : ''}
+          ${detailFlagHTML(q)}
         </div>
         <div class="question-text" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
         <div class="options no-letter">${optionsHTML}</div>
         ${feedbackHTML}
+        ${explanationHTML(q)}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
             <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
@@ -496,7 +524,7 @@
       const mark = isAnswer ? `<span class="answer-flag">✓ 正确答案</span>` : '';
       return `<div class="${cls}"><span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span></div>`;
     }).join('');
-    const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
+    const answerTexts = q.answer.map(l => q.options[l]).join('；');
 
     return `<section class="card question-card study-card">
       <div class="tag-row" style="margin-bottom:10px">
@@ -505,15 +533,17 @@
         <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题' : '◉ 单选题'}</span>
         ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
         <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
+          ${detailFlagHTML(q)}
       </div>
       <div class="question-text" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
       ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
       ${revealed
         ? `<div class="options">${optionsHTML}</div>
            <div class="feedback ok study-answer">
-             <strong>正确答案：<span class="answer-line">${esc(answerText(q))}</span></strong>
+             <strong>正确答案</strong>
              <p class="answer-text">${esc(answerTexts)}</p>
-           </div>`
+           </div>
+           ${explanationHTML(q)}`
         : `<div class="recall-hint">
              <b>先自己想一想</b>，想好了再揭晓 —— 回忆过的题记得更牢。
              <span>按 <kbd>空格</kbd> 揭晓答案</span>
@@ -574,10 +604,12 @@
           <span class="tag">${esc(q.id)}</span>
           <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选' : '◉ 单选'}</span>
           <span class="tag">章节 ${esc(q.section)}</span>
+          ${detailFlagHTML(q)}
         </div>
         <div class="study-list-q" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
         ${q.figure ? `<img class="study-list-fig" src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
         <div class="study-list-a"><b>答案 ${esc(answerText(q))}</b>　${esc(answerTexts)}</div>
+        ${explanationHTML(q)}
       </article>`;
     }).join('');
     return `<section class="card study-list">
@@ -876,7 +908,8 @@
     const payload = {
       app: 'B题库本地刷题', version: 1, exportedAt: new Date().toISOString(),
       records: state.records, study: state.study,
-      marks: state.marks || {}, showMarks: state.showMarks !== false
+      marks: state.marks || {}, showMarks: state.showMarks !== false,
+      detailFlags: state.detailFlags || {}
     };
     download(`B类题库进度_${stamp()}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
     toast('进度备份已导出');
@@ -920,6 +953,10 @@
           });
         }
         if (typeof data.showMarks === 'boolean') state.showMarks = data.showMarks;
+        if (data.detailFlags && typeof data.detailFlags === 'object' && !Array.isArray(data.detailFlags)) {
+          state.detailFlags = {};
+          Object.keys(data.detailFlags).forEach(id => { if (QMAP.has(id) && data.detailFlags[id]) state.detailFlags[id] = true; });
+        }
         saveState();
         render();
         toast(`已导入 ${n} 条题目记录`);
@@ -949,6 +986,7 @@
         ${q.figure ? `<img src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
         <div class="opts">${opts}</div>
         <div class="ans">正确答案：<b>${esc(answerText(q))}</b></div>
+        ${EXPLANATIONS[q.id] ? `<div class="exp">解析：${esc(EXPLANATIONS[q.id])}</div>` : ''}
       </article>`;
     }).join('');
     const title = ui.wrongFilter === 'active' ? '待复习错题' : ui.wrongFilter === 'mastered' ? '已掌握错题' : '全部错题';
@@ -960,7 +998,7 @@ article{border-top:1px solid #e2e8f0;padding:18px 0;break-inside:avoid}
 .qhead{font-weight:650;margin-bottom:10px}.qhead span{display:block}.meta{font-size:12px;color:#64748b;font-weight:400;margin-top:2px}
 .opts{display:grid;gap:6px}.opt{display:flex;gap:10px;padding:7px 10px;border-radius:8px;background:#f8fafc}
 .opt b{color:#64748b}.opt.right{background:#ecfdf5}.opt.right b{color:#059669}
-.ans{margin-top:8px;color:#059669;font-size:14px}.qmark{color:#dc2626;font-weight:700;background:#fee2e2;border-radius:3px}img{max-width:100%;max-height:320px;display:block;margin:10px 0;border:1px dashed #cbd5e1;border-radius:8px;padding:8px}
+.ans{margin-top:8px;color:#059669;font-size:14px}.exp{margin-top:6px;padding:8px 12px;background:#f5f3ff;border-left:3px solid #7c3aed;color:#4c1d95;border-radius:0 6px 6px 0;font-size:13px}.qmark{color:#dc2626;font-weight:700;background:#fee2e2;border-radius:3px}img{max-width:100%;max-height:320px;display:block;margin:10px 0;border:1px dashed #cbd5e1;border-radius:8px;padding:8px}
 @media print{body{padding:0}h1{font-size:18px}}
 </style></head><body>
 <h1>B 类题库 · ${title}</h1>
@@ -990,6 +1028,28 @@ ${rows || '<p>暂无错题</p>'}
       state.showMarks = state.showMarks === false;
       saveState(); render();
       toast(state.showMarks ? '题干标记已开启' : '题干标记已关闭（标记内容保留）');
+      return;
+    }
+    if (action === 'toggle-others') {
+      if (!session) return;
+      const id = session.ids[session.pos];
+      if (!session.othersOpen) session.othersOpen = {};
+      session.othersOpen[id] = !session.othersOpen[id];
+      render(); return;
+    }
+    if (action === 'toggle-expl') {
+      if (!session) return;
+      if (!session.explOpen) session.explOpen = {};
+      session.explOpen[el.dataset.id] = !session.explOpen[el.dataset.id];
+      render(); return;
+    }
+    if (action === 'toggle-detail') {
+      const id = el.dataset.id;
+      if (!state.detailFlags) state.detailFlags = {};
+      state.detailFlags[id] = !state.detailFlags[id];
+      if (!state.detailFlags[id]) delete state.detailFlags[id];
+      saveState(); render();
+      toast(state.detailFlags[id] ? '已标注：需进一步解析' : '已取消标注');
       return;
     }
     if (action === 'toggle-focus') { ui.focusMode = !ui.focusMode; render(); return; }
@@ -1058,7 +1118,7 @@ ${rows || '<p>暂无错题</p>'}
     }
     else if (action === 'reset-progress') {
       if (!confirm('确定清空全部进度、错题与收藏吗？此操作不可撤销。')) return;
-      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, marks: {}, showMarks: true, updatedAt: null };
+      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, marks: {}, showMarks: true, detailFlags: {}, updatedAt: null };
       ui.studyView = 'card'; ui.studyScope = 'all'; ui.studyPage = 0;
       session = null; saveState(); render(); toast('全部进度已清空');
     }

@@ -448,3 +448,24 @@ kbd, .key-hint { display: inline-block; padding: 1px 6px; border: 1px solid var(
   .mark-toolbar { left: 8px !important; right: 8px; justify-content: center; flex-wrap: wrap; }
   .mark-toggle { font-size: 11px; padding: 6px 8px; }
 }
+
+/* ===== 其他答案展开 ===== */
+.others-toggle { border: 0; background: transparent; color: var(--primary); font-size: 13px; font-weight: 600; padding: 4px 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.others-toggle:hover { color: var(--primary-dark, #1d4ed8); }
+.others-list { margin-top: 8px; padding: 10px 12px; border: 1px dashed var(--border-strong); border-radius: 8px; background: var(--surface-2); }
+.other-item { display: flex; gap: 10px; font-size: 13px; line-height: 1.6; padding: 3px 0; color: var(--muted); }
+.other-item .ol { flex: 0 0 18px; font-weight: 700; color: var(--text); }
+.fb-note { margin-top: 6px; }
+
+/* ===== 题目解析 ===== */
+.explanation { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.expl-toggle { border: 0; background: transparent; color: #7c3aed; font-size: 13px; font-weight: 600; cursor: pointer; padding: 2px 0; }
+.expl-toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
+.expl-body { margin-top: 8px; padding: 10px 14px; border-left: 3px solid #7c3aed; background: #f5f3ff; color: #4c1d95; border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
+.detail-flag { border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.detail-flag:hover { border-color: #f59e0b; color: #b45309; }
+.detail-flag.on { border-color: #f59e0b; background: #fffbeb; color: #b45309; }
+@media (max-width: 940px) {
+  .expl-body { font-size: 12px; padding: 9px 11px; }
+  .detail-flag { font-size: 11px; padding: 5px 8px; }
+}
