@@ -153,7 +153,8 @@
   // 题号徽章：单选蓝、多选紫（颜色即题型标识，省去单独徽章）
   function qNoHTML(q) {
     const multi = q.type === 'multiple';
-    return `<span class="qno ${multi ? 'multi' : 'single'}" title="${multi ? '多选题：可多选，全部选对才得分' : '单选题：点击选项自动提交'}">${q.no}</span>`;
+    const tip = `第 ${q.no} 题 · ${multi ? '多选' : '单选'}${q.bankId ? ' · ' + q.bankId : ''}`;
+    return `<span class="qno ${multi ? 'multi' : 'single'}" title="${esc(tip)}">${q.no}</span>`;
   }
 
   // 题干行：题号 + 题干（同一行，节约纵向空间），末尾挂「需详细解析」标注
