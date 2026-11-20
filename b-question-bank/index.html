@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>B类题库 · 本地刷题</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">B</span>
+        <div>
+          <h1>B 类题库 · 本地刷题</h1>
+          <p>业余无线电操作技术能力验证 · 离线自测与错题沉淀</p>
+        </div>
+      </div>
+      <div class="top-meta" id="topMeta"></div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <nav class="nav" id="nav">
+          <button class="nav-item active" data-action="nav" data-view="home"><span>⌂</span> 练习首页</button>
+          <button class="nav-item" data-action="nav" data-view="practice"><span>✎</span> 当前练习</button>
+          <button class="nav-item" data-action="nav" data-view="wrong"><span>⚑</span> 错题库 <em id="navWrongCount">0</em></button>
+          <button class="nav-item" data-action="nav" data-view="search"><span>⌕</span> 题目检索</button>
+          <button class="nav-item" data-action="nav" data-view="stats"><span>▤</span> 学习统计</button>
+        </nav>
+        <div class="sidebar-card" id="quickStats"></div>
+        <div class="sidebar-tip">
+          <strong>快捷键</strong>
+          <p>A / B / C / D 选择 · Enter 提交 · ← → 翻题</p>
+          <p>所有进度保存在本机浏览器，无需联网。</p>
+        </div>
+      </aside>
+      <main class="main" id="main"></main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <input type="file" id="importInput" accept="application/json,.json" hidden>
+
+  <script src="questions.js"></script>
+  <script src="images.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
