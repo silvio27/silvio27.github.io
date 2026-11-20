@@ -252,7 +252,7 @@
     const open = !!(session && session.othersOpen && session.othersOpen[q.id]);
     return `<div class="others-block">
       <button class="others-toggle" data-action="toggle-others" data-id="${esc(q.id)}">${open ? '收起其他答案 ▴' : '展开其他答案 ▾'}</button>
-      ${open ? `<div class="others-list">${others.map(l => `<div class="other-item"><span class="ol">${l}</span><span>${esc(q.disp[l])}</span></div>`).join('')}</div>` : ''}
+      ${open ? `<div class="others-list">${others.map(l => `<div class="other-item"><span>${esc(q.disp[l])}</span></div>`).join('')}</div>` : ''}
     </div>`;
   }
 
