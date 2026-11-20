@@ -30,15 +30,19 @@
   let session = null;
   let view = 'home';
   let autoSubmitTimer = null;
-  const STUDY_PAGE_SIZE = 20;
+  const STUDY_PAGE_SIZES = [10, 20, 50, 100, 'all'];
+  const DEFAULT_STUDY_PAGE_SIZE = 20;
   const ui = {
     wrongFilter: 'active', wrongQuery: '', searchQuery: '',
-    focusMode: false, studyView: 'card', studyScope: 'all', studyPage: 0
+    focusMode: false, studyView: 'card', studyScope: 'all', studyPage: 0,
+    studyPageSize: DEFAULT_STUDY_PAGE_SIZE
   };
   if (state.study) {
     if (state.study.view === 'card' || state.study.view === 'list') ui.studyView = state.study.view;
     if (['all', 'weak', 'starred'].includes(state.study.scope)) ui.studyScope = state.study.scope;
+    if (STUDY_PAGE_SIZES.includes(state.study.pageSize)) ui.studyPageSize = state.study.pageSize;
   }
+  function studySize() { return ui.studyPageSize === 'all' ? session.ids.length : ui.studyPageSize; }
 
   function loadState() {
     try {
@@ -376,11 +380,18 @@
     state.study.pos = (session && session.mode === 'study' && session.pos < session.ids.length) ? session.pos : 0;
     state.study.view = ui.studyView;
     state.study.scope = ui.studyScope;
+    state.study.pageSize = ui.studyPageSize;
     saveState();
   }
 
   function studyPageCount() {
-    return Math.max(1, Math.ceil(session.ids.length / STUDY_PAGE_SIZE));
+    const size = studySize();
+    return Math.max(1, Math.ceil(session.ids.length / (size || 1)));
+  }
+
+  function setStudyPage(n) {
+    const pages = studyPageCount();
+    ui.studyPage = Math.max(0, Math.min(pages - 1, n));
   }
 
   function renderStudy() {
@@ -466,9 +477,38 @@
     </section>`;
   }
 
+  function studyPagerHTML(where) {
+    const pages = studyPageCount();
+    const sizeLabel = ui.studyPageSize === 'all' ? '全部' : String(ui.studyPageSize);
+    const sizeOptions = STUDY_PAGE_SIZES.map(s =>
+      `<option value="${s}" ${ui.studyPageSize === s ? 'selected' : ''}>${s === 'all' ? '全部' : s + ' 题'}</option>`).join('');
+    const pageOptions = Array.from({ length: pages }, (_, i) =>
+      `<option value="${i}" ${ui.studyPage === i ? 'selected' : ''}>第 ${i + 1} 页</option>`).join('');
+    return `<div class="study-pager">
+      <div class="pager-row">
+        <label class="pager-label">每页显示</label>
+        <select class="pager-select" data-change="study-page-size-change" aria-label="每页显示题数">${sizeOptions}</select>
+        <span class="pager-count">共 ${session.ids.length} 题 / ${pages} 页</span>
+      </div>
+      <div class="pager-row">
+        <button class="pager-btn" data-action="study-page-first" ${ui.studyPage === 0 ? 'disabled' : ''} title="首页">«</button>
+        <button class="pager-btn" data-action="study-page-prev" ${ui.studyPage === 0 ? 'disabled' : ''} title="上一页">‹</button>
+        <select class="pager-select page-select" data-change="study-page-jump-select" aria-label="跳转到指定页">${pageOptions}</select>
+        <span class="pager-slash">/ ${pages}</span>
+        <button class="pager-btn" data-action="study-page-next" ${ui.studyPage >= pages - 1 ? 'disabled' : ''} title="下一页">›</button>
+        <button class="pager-btn" data-action="study-page-last" ${ui.studyPage >= pages - 1 ? 'disabled' : ''} title="末页">»</button>
+      </div>
+      <div class="pager-row pager-goto">
+        <input type="number" class="pager-input" min="1" max="${pages}" value="${ui.studyPage + 1}" data-page-input="${where}" aria-label="页码">
+        <button class="btn small" data-action="study-page-goto" data-where="${where}">跳到该页</button>
+        <span class="pager-label">当前每页 ${sizeLabel}</span>
+      </div>
+    </div>`;
+  }
+
   function renderStudyList() {
-    const start = ui.studyPage * STUDY_PAGE_SIZE;
-    const items = session.ids.slice(start, start + STUDY_PAGE_SIZE);
+    const start = ui.studyPage * studySize();
+    const items = session.ids.slice(start, start + studySize());
     const rows = items.map((qid, i) => {
       const q = QMAP.get(qid);
       if (!q) return '';
@@ -486,14 +526,11 @@
         <div class="study-list-a"><b>答案 ${esc(answerText(q))}</b>　${esc(answerTexts)}</div>
       </article>`;
     }).join('');
-    const pages = studyPageCount();
     return `<section class="card study-list">
-      <p class="section-note" style="margin:0 0 12px">滚动浏览题干与答案，一页 ${STUDY_PAGE_SIZE} 题。按 <kbd>空格</kbd> 翻下一页。</p>
-      ${rows}
-      <div class="btn-row spread practice-actions" style="margin-top:16px">
-        <button class="btn" data-action="study-page-prev" ${ui.studyPage === 0 ? 'disabled' : ''}>← 上一页</button>
-        <button class="btn primary" data-action="study-page-next" ${ui.studyPage >= pages - 1 ? 'disabled' : ''}>下一页 →</button>
-      </div>
+      <p class="section-note" style="margin:0 0 12px">滚动浏览题干与答案，可手动调整每页题数并快速跳页。按 <kbd>空格</kbd> 翻下一页。</p>
+      ${studyPagerHTML('top')}
+      <div class="study-list-body">${rows}</div>
+      ${studyPagerHTML('bottom')}
     </section>`;
   }
 
@@ -816,6 +853,7 @@
           if (typeof data.study.pos === 'number') state.study.pos = Math.max(0, Math.floor(data.study.pos));
           if (data.study.view === 'card' || data.study.view === 'list') { state.study.view = data.study.view; ui.studyView = data.study.view; }
           if (['all', 'weak', 'starred'].includes(data.study.scope)) { state.study.scope = data.study.scope; ui.studyScope = data.study.scope; }
+          if (STUDY_PAGE_SIZES.includes(data.study.pageSize)) { state.study.pageSize = data.study.pageSize; ui.studyPageSize = data.study.pageSize; }
         }
         saveState();
         render();
@@ -895,8 +933,16 @@ ${rows || '<p>暂无错题</p>'}
       if (!session || session.mode !== 'study') return;
       session.revealed[session.ids[session.pos]] = true; render(); return;
     }
-    if (action === 'study-page-prev') { ui.studyPage = Math.max(0, ui.studyPage - 1); render(); return; }
-    if (action === 'study-page-next') { ui.studyPage = Math.min(studyPageCount() - 1, ui.studyPage + 1); render(); return; }
+    if (action === 'study-page-prev') { setStudyPage(ui.studyPage - 1); render(); return; }
+    if (action === 'study-page-next') { setStudyPage(ui.studyPage + 1); render(); return; }
+    if (action === 'study-page-first') { setStudyPage(0); render(); return; }
+    if (action === 'study-page-last') { setStudyPage(studyPageCount() - 1); render(); return; }
+    if (action === 'study-page-goto') {
+      const input = document.querySelector(`[data-page-input="${el.dataset.where}"]`);
+      const val = parseInt(input && input.value, 10);
+      if (Number.isFinite(val)) { setStudyPage(val - 1); render(); toast('已跳转到第 ' + (ui.studyPage + 1) + ' 页'); }
+      return;
+    }
     if (action === 'nav') { view = el.dataset.view; render(); }
     else if (action === 'start') startSession(el.dataset.mode, { section: el.dataset.section });
     else if (action === 'toggle-option') toggleOption(el.dataset.letter);
@@ -928,7 +974,7 @@ ${rows || '<p>暂无错题</p>'}
     }
     else if (action === 'reset-progress') {
       if (!confirm('确定清空全部进度、错题与收藏吗？此操作不可撤销。')) return;
-      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, updatedAt: null };
+      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, updatedAt: null };
       ui.studyView = 'card'; ui.studyScope = 'all'; ui.studyPage = 0;
       session = null; saveState(); render(); toast('全部进度已清空');
     }
@@ -939,6 +985,31 @@ ${rows || '<p>暂无错题</p>'}
     else if (action === 'completion-home') { view = 'home'; session = null; render(); }
     else if (action === 'completion-wrong') { view = 'wrong'; session = null; render(); }
     else if (action === 'completion-retry') { const mode = session.mode, title = session.title, ids = session.ids.slice(); startSession(mode, { section: title, ids }); }
+  });
+
+  document.addEventListener('change', e => {
+    const el = e.target.closest('[data-change]');
+    if (!el) return;
+    const change = el.dataset.change;
+    if (change === 'study-page-size-change') {
+      const firstId = (session && session.ids[ui.studyPage * studySize()]) || null;
+      const raw = el.value;
+      ui.studyPageSize = raw === 'all' ? 'all' : parseInt(raw, 10);
+      if (!STUDY_PAGE_SIZES.includes(ui.studyPageSize)) ui.studyPageSize = DEFAULT_STUDY_PAGE_SIZE;
+      // 尽量停留在当前所在题目
+      let targetPage = 0;
+      if (firstId) {
+        const idx = session.ids.indexOf(firstId);
+        if (idx >= 0) targetPage = Math.floor(idx / studySize());
+      }
+      setStudyPage(targetPage);
+      if (state.study) { state.study.pageSize = ui.studyPageSize; saveStudyPos(); }
+      render();
+      toast('每页显示已切换为 ' + (ui.studyPageSize === 'all' ? '全部题目' : ui.studyPageSize + ' 题'));
+    } else if (change === 'study-page-jump-select') {
+      setStudyPage(parseInt(el.value, 10) || 0);
+      render();
+    }
   });
 
   document.addEventListener('input', e => {
