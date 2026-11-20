@@ -28,6 +28,56 @@
     return INLINE_IMAGES[name] || ('images/' + encodeURIComponent(name));
   }
 
+  // ===== 选项乱序 =====
+  // 题库原始答案多落在 A，按原顺序展示等于把答案摆好。这里按题目 id 做确定性打乱后重新编号 A/B/C/D，
+  // q.options/q.answer 仍保留原始字母键（数据不动），所有展示与判分走 disp/dispAnswer。
+  // 例外：解析里点名了选项字母（如“C 项……”）的题保持原顺序，避免解析文字与选项错位。
+  const LETTER_REF = /(?:选项\s*[ABCD]|[ABCD]\s*项|[ABCD]\s*[、．.）)]|[（(]\s*[ABCD]\s*[）)])/;
+
+  function hashSeed(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  function makeRng(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  QUESTIONS.forEach(q => {
+    const exp = EXPLANATIONS[q.id] || '';
+    const order = LETTERS.slice();
+    if (!LETTER_REF.test(exp)) {
+      const rand = makeRng(hashSeed(q.id));
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        const t = order[i]; order[i] = order[j]; order[j] = t;
+      }
+      if (order.join('') === LETTERS.join('')) { const t = order[0]; order[0] = order[1]; order[1] = t; }
+    }
+    const disp = {}, map = {}, dispAnswer = [];
+    order.forEach((origLetter, i) => {
+      const dl = LETTERS[i];
+      if (q.options[origLetter] == null) return;
+      disp[dl] = q.options[origLetter];
+      map[dl] = origLetter;
+      if (q.answer.includes(origLetter)) dispAnswer.push(dl);
+    });
+    q.disp = disp;
+    q.dispMap = map;
+    q.dispAnswer = dispAnswer;
+  });
+
+  // 展示用选项字母（按显示顺序，缺项则跳过）与判分
+  function dispLetters(q) { return LETTERS.filter(l => q.disp && q.disp[l] != null); }
+  function isRight(q, letter) { return (q.dispAnswer || []).includes(letter); }
+
   let state = loadState();
   let session = null;
   let view = 'home';
@@ -56,11 +106,30 @@
           if (!parsed.marks || typeof parsed.marks !== 'object' || Array.isArray(parsed.marks)) parsed.marks = {};
           if (typeof parsed.showMarks !== 'boolean') parsed.showMarks = true;
           if (!parsed.detailFlags || typeof parsed.detailFlags !== 'object' || Array.isArray(parsed.detailFlags)) parsed.detailFlags = {};
+          // v1 → v2：旧版把题号徽章（如 695）算进了题干文本，导致标记整体右移「题号位数」个字。
+          // 一次性回正，避免历史标记错位。
+          if (parsed.marksVersion !== 2) {
+            const fixedMarks = {};
+            Object.keys(parsed.marks).forEach(qid => {
+              const q = QMAP.get(qid);
+              const d = q ? String(q.no).length : 0;
+              const len = q ? String(q.question || '').length : Infinity;
+              const ranges = Array.isArray(parsed.marks[qid]) ? parsed.marks[qid] : [];
+              const fixed = ranges.map(r => {
+                const s = Number(r.s) - d, e = Number(r.e) - d;
+                return { s: Math.max(0, Math.min(s, len)), e: Math.max(0, Math.min(e, len)) };
+              }).filter(r => r.e > r.s);
+              if (fixed.length) fixedMarks[qid] = fixed;
+            });
+            parsed.marks = fixedMarks;
+            parsed.marksVersion = 2;
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed)); } catch (e) { /* 忽略 */ }
+          }
           return parsed;
         }
       }
     } catch (e) { /* 存储不可用时退回内存 */ }
-    return { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, marks: {}, showMarks: true, detailFlags: {}, updatedAt: null };
+    return { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, marks: {}, showMarks: true, detailFlags: {}, marksVersion: 2, updatedAt: null };
   }
 
   function saveState() {
@@ -157,11 +226,20 @@
     return `<span class="qno ${multi ? 'multi' : 'single'}" title="${esc(tip)}">${q.no}</span>`;
   }
 
+  // 题型标签：多选题在题干前标出【多选题】
+  function typeTagHTML(q) {
+    return q.type === 'multiple' ? '<span class="type-tag">【多选题】</span>' : '';
+  }
+
   // 题干行：题号 + 题干（同一行，节约纵向空间），末尾挂「需详细解析」标注
+  // 注意：题号/题型标签必须放在 data-qmark-host 之外，否则标记坐标会把这些字算进去导致错位
   function questionRowHTML(q, extraHTML) {
     return `<div class="qtext-row">
-      <div class="qtext-main">
-        <div class="question-text" data-qmark-host="${esc(q.id)}">${qNoHTML(q)}${questionTextHTML(q)}</div>
+      <div class="qline">
+        ${qNoHTML(q)}${typeTagHTML(q)}
+        <div class="qtext-main">
+          <div class="question-text" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
+        </div>
       </div>
       ${extraHTML || ''}
     </div>`;
@@ -169,12 +247,12 @@
 
   // 其余选项（错误答案）手动展开，practice/速览通用
   function othersAnswersHTML(q) {
-    const others = LETTERS.filter(l => !q.answer.includes(l));
+    const others = dispLetters(q).filter(l => !isRight(q, l));
     if (!others.length) return '';
     const open = !!(session && session.othersOpen && session.othersOpen[q.id]);
     return `<div class="others-block">
       <button class="others-toggle" data-action="toggle-others" data-id="${esc(q.id)}">${open ? '收起其他答案 ▴' : '展开其他答案 ▾'}</button>
-      ${open ? `<div class="others-list">${others.map(l => `<div class="other-item"><span class="ol">${l}</span><span>${esc(q.options[l])}</span></div>`).join('')}</div>` : ''}
+      ${open ? `<div class="others-list">${others.map(l => `<div class="other-item"><span class="ol">${l}</span><span>${esc(q.disp[l])}</span></div>`).join('')}</div>` : ''}
     </div>`;
   }
 
@@ -189,25 +267,47 @@
     </div>`;
   }
 
-  // 标注"需要进一步解析"（供下次生成更详细解析）
+  // 详解按钮暂时隐藏（逻辑与数据保留，届时把 return 改回按钮即可）
   function detailFlagHTML(q) {
-    const on = !!(state.detailFlags && state.detailFlags[q.id]);
-    return `<button class="detail-flag ${on ? 'on' : ''}" data-action="toggle-detail" data-id="${esc(q.id)}" title="${on ? '已标注：下次会为你生成更详细的解析（点击取消）' : '标注后，下次为你生成更详细的解析'}">${on ? '✓ 详解' : '＋ 详解'}</button>`;
+    return '';
   }
 
   // 计算选区在某个文本容器内相对于纯文本的字符偏移
+  // 用文本节点遍历计数，避免 Range.toString() 在不同浏览器（尤其移动端）对块级/换行处理不一致
+  function offsetInHost(host, node, offset) {
+    if (node === host) {
+      let total = 0;
+      for (let i = 0; i < offset && i < host.childNodes.length; i++) total += host.childNodes[i].textContent.length;
+      return total;
+    }
+    if (node.nodeType === 3) {
+      let total = 0;
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
+      let t;
+      while ((t = walker.nextNode())) {
+        if (t === node) return total + offset;
+        total += t.nodeValue.length;
+      }
+      return null;
+    }
+    // 选区端点落在元素上：退回 Range 方式
+    try {
+      const r = document.createRange();
+      r.setStart(host, 0);
+      r.setEnd(node, offset);
+      return r.toString().length;
+    } catch (e) { return null; }
+  }
+
   function selectionOffsets(container) {
     const sel = window.getSelection && window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
     const range = sel.getRangeAt(0);
     if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) return null;
-    const pre = range.cloneRange();
-    pre.selectNodeContents(container);
-    try { pre.setEnd(range.startContainer, range.startOffset); } catch (e) { return null; }
-    const start = pre.toString().length;
-    const picked = range.toString();
-    if (!picked.length) return null;
-    return { s: start, e: start + picked.length, text: picked };
+    const s = offsetInHost(container, range.startContainer, range.startOffset);
+    const e = offsetInHost(container, range.endContainer, range.endOffset);
+    if (s == null || e == null || e <= s) return null;
+    return { s: Math.min(s, e), e: Math.max(s, e), text: range.toString() };
   }
 
   function formatDate(iso) {
@@ -226,7 +326,7 @@
     return arr;
   }
 
-  function answerText(q) { return q.answer.join(''); }
+  function answerText(q) { return (q.dispAnswer || []).join(''); }
 
   function render() {
     document.querySelectorAll('.nav-item').forEach(el => {
@@ -394,37 +494,24 @@
     const percent = session.ids.length ? Math.round(answered / session.ids.length * 100) : 0;
 
     const isMulti = q.type === 'multiple';
-    const optionsHTML = LETTERS.map(letter => {
+    const optionsHTML = dispLetters(q).map(letter => {
       let cls = 'option';
       if (selected.includes(letter)) cls += ' selected';
       if (submitted) {
         cls += ' locked';
-        const isAnswer = q.answer.includes(letter);
+        const isAnswer = isRight(q, letter);
         const isSelected = selected.includes(letter);
         if (isAnswer) cls += ' is-answer';
         if (isAnswer && isSelected) cls += ' is-correct';
         else if (isAnswer && !isSelected) cls += ' is-missed';
         else if (!isAnswer && isSelected) cls += ' is-wrong';
       }
-      const mark = submitted && q.answer.includes(letter)
+      const mark = submitted && isRight(q, letter)
         ? `<span class="answer-flag">✓ 正确答案</span>` : '';
       return `<button class="${cls}" data-action="toggle-option" data-letter="${letter}" ${submitted ? 'disabled' : ''}>
-        <span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span>
+        <span class="letter">${letter}</span><span class="body">${esc(q.disp[letter])}${mark}</span>
       </button>`;
     }).join('');
-
-    let feedbackHTML = '';
-    if (submitted) {
-      const correct = selected.length === q.answer.length && selected.every(x => q.answer.includes(x));
-      // 正确答案文字不再重复字母前缀（选项区已用绿色标出正确答案）
-      const answerTexts = q.answer.map(l => q.options[l]).join('；');
-      feedbackHTML = `<div class="feedback ${correct ? 'ok' : 'no'}">
-        <strong>${correct ? '✓ 回答正确' : '✕ 回答错误'}</strong>
-        <p>正确答案：<span class="answer-text">${esc(answerTexts)}</span></p>
-        ${othersAnswersHTML(q)}
-        ${correct ? '<p class="fb-note">本题已计入正确统计。</p>' : '<p class="fb-note">本题已自动加入错题库，可在“错题重练”中复习。</p>'}
-      </div>`;
-    }
 
     return `<div class="view">
       <section class="card practice-bar">
@@ -446,7 +533,6 @@
         ${questionRowHTML(q, detailFlagHTML(q))}
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
         <div class="options no-letter">${optionsHTML}</div>
-        ${feedbackHTML}
         ${explanationHTML(q)}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
@@ -540,23 +626,18 @@
     const isMulti = q.type === 'multiple';
     const revealed = !!session.revealed[qid];
 
-    const optionsHTML = LETTERS.map(letter => {
-      const isAnswer = q.answer.includes(letter);
+    const optionsHTML = dispLetters(q).map(letter => {
+      const isAnswer = isRight(q, letter);
       const cls = 'option locked' + (isAnswer ? ' is-answer is-correct' : '');
       const mark = isAnswer ? `<span class="answer-flag">✓ 正确答案</span>` : '';
-      return `<div class="${cls}"><span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span></div>`;
+      return `<div class="${cls}"><span class="letter">${letter}</span><span class="body">${esc(q.disp[letter])}${mark}</span></div>`;
     }).join('');
-    const answerTexts = q.answer.map(l => q.options[l]).join('；');
 
     return `<section class="card question-card study-card">
       ${questionRowHTML(q, `<div class="qside-btns"><button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>${detailFlagHTML(q)}</div>`)}
       ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
       ${revealed
         ? `<div class="options">${optionsHTML}</div>
-           <div class="feedback ok study-answer">
-             <strong>正确答案</strong>
-             <p class="answer-text">${esc(answerTexts)}</p>
-           </div>
            ${explanationHTML(q)}`
         : `<div class="recall-hint">
              <b>先自己想一想</b>，想好了再揭晓 —— 回忆过的题记得更牢。
@@ -610,14 +691,19 @@
     const rows = items.map((qid, i) => {
       const q = QMAP.get(qid);
       if (!q) return '';
-      const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
+      // 正确答案按选项逐行展示（A/B/C 各占一行，便于扫读）
+      const answerList = (q.dispAnswer || []).map(l =>
+        `<div class="al-item"><span class="ol">${l}</span><span class="at">${esc(q.disp[l])}</span></div>`).join('');
       return `<article class="study-list-item">
         <div class="study-list-qrow">
-          <div class="study-list-q" data-qmark-host="${esc(q.id)}">${qNoHTML(q)}${questionTextHTML(q)}</div>
+          <div class="study-list-qline">
+            ${qNoHTML(q)}${typeTagHTML(q)}
+            <div class="study-list-q" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
+          </div>
           ${detailFlagHTML(q)}
         </div>
         ${q.figure ? `<img class="study-list-fig" src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
-        <div class="study-list-a"><b>答案</b>　${esc(answerTexts)}</div>
+        <div class="study-list-a"><div class="al-title">答案</div>${answerList}</div>
         ${othersAnswersHTML(q)}
         ${explanationHTML(q)}
       </article>`;
@@ -786,7 +872,7 @@
         <span class="tag blue">${esc(q.id)}</span><span class="tag">${esc(q.section)}</span>
         <span class="tag ${q.type === 'multiple' ? 'amber' : ''}">${q.type === 'multiple' ? '多选' : '单选'}</span>
       </div>
-      <div class="r-snippet">${esc(LETTERS.map(l => l + '. ' + q.options[l]).join('　'))}</div>
+      <div class="r-snippet">${esc(dispLetters(q).map(l => l + '. ' + q.disp[l]).join('　'))}</div>
     </div>`).join('');
   }
 
@@ -893,7 +979,7 @@
       q = QMAP.get(qid),
       sel = session.selected[qid] || [];
     if (!sel.length) { toast('请先选择答案'); return; }
-    const correct = sel.length === q.answer.length && sel.every(x => q.answer.includes(x));
+    const correct = sel.length === (q.dispAnswer || []).length && sel.every(x => isRight(q, x));
     session.submitted[qid] = true;
     session.answers[qid] = sel.slice();
     if (correct) session.correct++; else session.wrong++;
@@ -944,6 +1030,7 @@
       app: 'B题库本地刷题', version: 1, exportedAt: new Date().toISOString(),
       records: state.records, study: state.study,
       marks: state.marks || {}, showMarks: state.showMarks !== false,
+      marksVersion: 2,
       detailFlags: state.detailFlags || {}
     };
     download(`B类题库进度_${stamp()}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
@@ -1015,7 +1102,7 @@
     const ids = filteredWrongIds();
     const rows = ids.map((id, i) => {
       const q = QMAP.get(id), r = getRec(id);
-      const opts = LETTERS.map(l => `<div class="opt ${q.answer.includes(l) ? 'right' : ''}"><b>${l}</b><span>${esc(q.options[l])}</span></div>`).join('');
+      const opts = dispLetters(q).map(l => `<div class="opt ${isRight(q, l) ? 'right' : ''}"><b>${l}</b><span>${esc(q.disp[l])}</span></div>`).join('');
       return `<article>
         <div class="qhead"><span>${i + 1}. ${questionTextHTML(q)}</span><span class="meta">${esc(q.id)} · 章节 ${esc(q.section)} · ${q.type === 'multiple' ? '多选' : '单选'} · 错 ${r.wrongCount} 次 · ${formatDate(r.wrongAt)}</span></div>
         ${q.figure ? `<img src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
@@ -1153,7 +1240,7 @@ ${rows || '<p>暂无错题</p>'}
     }
     else if (action === 'reset-progress') {
       if (!confirm('确定清空全部进度、错题与收藏吗？此操作不可撤销。')) return;
-      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, marks: {}, showMarks: true, detailFlags: {}, updatedAt: null };
+      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, marks: {}, showMarks: true, detailFlags: {}, marksVersion: 2, updatedAt: null };
       ui.studyView = 'card'; ui.studyScope = 'all'; ui.studyPage = 0;
       session = null; saveState(); render(); toast('全部进度已清空');
     }
@@ -1226,7 +1313,15 @@ ${rows || '<p>暂无错题</p>'}
 
   // ===== 题干标记交互：选中题干文字后弹出工具条 =====
   let markSel = null; // {qid, s, e}
+  let suppressHide = false; // 手指点在工具条上时不要因选区收起而误关工具条（移动端必备）
+  let suppressTimer = null;
   const markToolbarEl = document.getElementById('markToolbar');
+
+  function keepToolbar() {
+    suppressHide = true;
+    if (suppressTimer) clearTimeout(suppressTimer);
+    suppressTimer = setTimeout(() => { suppressHide = false; }, 900);
+  }
 
   function hideMarkToolbar() {
     if (markToolbarEl) markToolbarEl.hidden = true;
@@ -1235,6 +1330,7 @@ ${rows || '<p>暂无错题</p>'}
 
   function onSelectionChange() {
     if (!markToolbarEl) return;
+    if (suppressHide) return; // 正在点工具条，保留当前选区与工具条
     // 仅在练习/学习视图显示标记工具条
     if (view !== 'practice' || !session) { hideMarkToolbar(); return; }
     const sel = window.getSelection && window.getSelection();
@@ -1254,26 +1350,31 @@ ${rows || '<p>暂无错题</p>'}
     const hint = markToolbarEl.querySelector('.mt-hint');
     if (hint) hint.textContent = `已选中 ${off.e - off.s} 字`;
     markToolbarEl.hidden = false;
-    // 定位到选区下方
+    // 定位到选区下方；下方放不开时改为选区上方，避免被屏幕边缘截断
     try {
       const rect = range.getBoundingClientRect();
       const mw = markToolbarEl.offsetWidth || 260;
+      const mh = markToolbarEl.offsetHeight || 44;
+      const vw = window.innerWidth || 800;
+      const vh = window.innerHeight || 800;
       let left = rect.left + rect.width / 2 - mw / 2;
-      left = Math.max(8, Math.min(left, (window.innerWidth || 800) - mw - 8));
-      let top = rect.bottom + 8;
-      if (rect.top < 60) top = rect.bottom + 8;
+      left = Math.max(8, Math.min(left, vw - mw - 8));
+      let top = rect.bottom + 10;
+      if (top + mh > vh - 8) top = Math.max(8, rect.top - mh - 10);
       markToolbarEl.style.left = left + 'px';
       markToolbarEl.style.top = top + 'px';
     } catch (e) { markToolbarEl.style.left = '12px'; markToolbarEl.style.top = '12px'; }
   }
 
   if (markToolbarEl) {
-    markToolbarEl.addEventListener('mousedown', e => { e.preventDefault(); }); // 防止选区丢失
+    // 桌面：阻止 mousedown 抢走焦点；移动端：手指按下时冻结选区收起逻辑
+    markToolbarEl.addEventListener('mousedown', e => { e.preventDefault(); keepToolbar(); });
+    markToolbarEl.addEventListener('touchstart', () => { keepToolbar(); }, { passive: true });
     markToolbarEl.addEventListener('click', e => {
       const btn = e.target.closest('[data-mark-action]');
       if (!btn) return;
       const action = btn.dataset.markAction;
-      if (action === 'cancel') { hideMarkToolbar(); const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges(); return; }
+      if (action === 'cancel') { suppressHide = false; hideMarkToolbar(); const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges(); return; }
       if (action === 'add' && markSel) {
         if (!state.marks) state.marks = {};
         const next = getMarks(markSel.qid).concat([{ s: markSel.s, e: markSel.e }]);
@@ -1281,13 +1382,14 @@ ${rows || '<p>暂无错题</p>'}
         state.showMarks = true; // 标红后自动确保可见
         saveState();
         const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges();
+        suppressHide = false;
         hideMarkToolbar(); render();
         toast('已标红关键内容');
       }
     });
   }
   document.addEventListener('mouseup', () => { setTimeout(onSelectionChange, 0); });
-  document.addEventListener('touchend', () => { setTimeout(onSelectionChange, 120); });
+  document.addEventListener('touchend', () => { setTimeout(onSelectionChange, 150); });
   document.addEventListener('selectionchange', () => { setTimeout(onSelectionChange, 0); });
 
   document.addEventListener('keydown', e => {
