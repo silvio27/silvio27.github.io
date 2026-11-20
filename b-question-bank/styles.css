@@ -469,3 +469,28 @@ kbd, .key-hint { display: inline-block; padding: 1px 6px; border: 1px solid var(
   .expl-body { font-size: 12px; padding: 9px 11px; }
   .detail-flag { font-size: 11px; padding: 5px 8px; }
 }
+
+/* ===== 题号徽章：单选蓝 / 多选紫 ===== */
+.qtext-row { display: flex; gap: 10px; align-items: flex-start; }
+.qtext-main { flex: 1 1 auto; min-width: 0; }
+.qside, .qside-btns { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.qno {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 30px; height: 22px; padding: 0 7px; margin-right: 8px;
+  border-radius: 7px; font-size: 12.5px; font-weight: 700; line-height: 1;
+  vertical-align: 3px; font-variant-numeric: tabular-nums; letter-spacing: 0;
+  user-select: none; -webkit-user-select: none;
+}
+.qno.single { background: #e8f1ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
+.qno.multi { background: #f5edff; border: 1px solid #d8b4fe; color: #7e22ce; }
+.study-list-qrow { display: flex; gap: 8px; align-items: flex-start; }
+.study-list-q { flex: 1 1 auto; min-width: 0; }
+.study-list-qrow .detail-flag { flex: 0 0 auto; margin-top: 1px; }
+.detail-flag { padding: 4px 8px; font-size: 11.5px; border-radius: 7px; }
+.others-block { margin-top: 8px; }
+.others-block .others-toggle { padding: 2px 0; font-size: 12.5px; }
+@media (max-width: 940px) {
+  .qtext-row { gap: 7px; }
+  .qno { min-width: 26px; height: 20px; padding: 0 6px; font-size: 11.5px; margin-right: 6px; }
+  .detail-flag { padding: 4px 6px; font-size: 11px; }
+}

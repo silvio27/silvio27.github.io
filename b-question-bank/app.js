@@ -11,6 +11,7 @@
   const QUESTIONS = BANK.questions;
   const META = BANK.meta;
   const QMAP = new Map(QUESTIONS.map(q => [q.id, q]));
+  QUESTIONS.forEach((q, i) => { q.no = q.no || i + 1; });
   const ALL_IDS = QUESTIONS.map(q => q.id);
   const SECTIONS = Array.from(new Set(QUESTIONS.map(q => q.section))).sort((a, b) => {
     const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
@@ -149,6 +150,33 @@
     return html;
   }
 
+  // 题号徽章：单选蓝、多选紫（颜色即题型标识，省去单独徽章）
+  function qNoHTML(q) {
+    const multi = q.type === 'multiple';
+    return `<span class="qno ${multi ? 'multi' : 'single'}" title="${multi ? '多选题：可多选，全部选对才得分' : '单选题：点击选项自动提交'}">${q.no}</span>`;
+  }
+
+  // 题干行：题号 + 题干（同一行，节约纵向空间），末尾挂「需详细解析」标注
+  function questionRowHTML(q, extraHTML) {
+    return `<div class="qtext-row">
+      <div class="qtext-main">
+        <div class="question-text" data-qmark-host="${esc(q.id)}">${qNoHTML(q)}${questionTextHTML(q)}</div>
+      </div>
+      ${extraHTML || ''}
+    </div>`;
+  }
+
+  // 其余选项（错误答案）手动展开，practice/速览通用
+  function othersAnswersHTML(q) {
+    const others = LETTERS.filter(l => !q.answer.includes(l));
+    if (!others.length) return '';
+    const open = !!(session && session.othersOpen && session.othersOpen[q.id]);
+    return `<div class="others-block">
+      <button class="others-toggle" data-action="toggle-others" data-id="${esc(q.id)}">${open ? '收起其他答案 ▴' : '展开其他答案 ▾'}</button>
+      ${open ? `<div class="others-list">${others.map(l => `<div class="other-item"><span class="ol">${l}</span><span>${esc(q.options[l])}</span></div>`).join('')}</div>` : ''}
+    </div>`;
+  }
+
   // 解析区：默认收起，点击展开；只有该题有解析且有解析价值时才显示
   function explanationHTML(q) {
     const text = EXPLANATIONS[q.id];
@@ -163,7 +191,7 @@
   // 标注"需要进一步解析"（供下次生成更详细解析）
   function detailFlagHTML(q) {
     const on = !!(state.detailFlags && state.detailFlags[q.id]);
-    return `<button class="detail-flag ${on ? 'on' : ''}" data-action="toggle-detail" data-id="${esc(q.id)}" title="标注后，下次检查时为你生成更详细的解析">${on ? '✓ 需详细解析' : '＋ 需详细解析'}</button>`;
+    return `<button class="detail-flag ${on ? 'on' : ''}" data-action="toggle-detail" data-id="${esc(q.id)}" title="${on ? '已标注：下次会为你生成更详细的解析（点击取消）' : '标注后，下次为你生成更详细的解析'}">${on ? '✓ 详解' : '＋ 详解'}</button>`;
   }
 
   // 计算选区在某个文本容器内相对于纯文本的字符偏移
@@ -215,6 +243,8 @@
       <span class="meta-chip">多选 <b>${META.multiple}</b></span>
       <span class="meta-chip">已练 <b>${attempted}</b></span>`;
     document.getElementById('navWrongCount').textContent = wrongIds().length;
+    const navFlagEl = document.getElementById('navFlagCount');
+    if (navFlagEl) navFlagEl.textContent = Object.keys(state.detailFlags || {}).length;
     document.getElementById('quickStats').innerHTML = `
       <h3>学习概览</h3>
       <div class="mini-stat"><span>已练题目</span><b>${attempted}</b></div>
@@ -227,6 +257,7 @@
     else if (view === 'wrong') main.innerHTML = renderWrong();
     else if (view === 'search') main.innerHTML = renderSearch();
     else if (view === 'stats') main.innerHTML = renderStats();
+    else if (view === 'flags') main.innerHTML = renderFlags();
   }
 
   function renderHome() {
@@ -239,6 +270,7 @@
     const everWrong = recs.filter(r => (r.wrongCount || 0) > 0).length;
     const masteredN = ALL_IDS.length - smartIds().length;
     const skimmed = !!(state.study && state.study.skimmed);
+    const flaggedN = Object.keys(state.detailFlags || {}).length;
 
     const s1 = skimmed ? 'done' : (attempted ? 'todo' : 'active');
     const s2 = attempted >= META.total ? 'done' : (attempted ? 'active' : 'todo');
@@ -316,6 +348,7 @@
           <button class="btn" data-action="nav" data-view="search">题目检索</button>
           <button class="btn" data-action="nav" data-view="stats">学习统计</button>
           <button class="btn" data-action="nav" data-view="wrong">错题库</button>
+          <button class="btn" data-action="nav" data-view="flags">已标注详解 ${flaggedN ? `<b style="color:#b45309">${flaggedN}</b>` : '(0)'}</button>
         </div>
         <div class="inline-form" style="margin-top:16px">
           <div class="field"><label for="chapterSelect">按章节练习</label>
@@ -384,15 +417,10 @@
       const correct = selected.length === q.answer.length && selected.every(x => q.answer.includes(x));
       // 正确答案文字不再重复字母前缀（选项区已用绿色标出正确答案）
       const answerTexts = q.answer.map(l => q.options[l]).join('；');
-      const others = LETTERS.filter(l => !q.answer.includes(l));
-      const othersOpen = !!(session.othersOpen && session.othersOpen[qid]);
-      const othersHTML = othersOpen && others.length
-        ? `<div class="others-list">${others.map(l => `<div class="other-item"><span class="ol">${l}</span><span>${esc(q.options[l])}</span></div>`).join('')}</div>`
-        : '';
       feedbackHTML = `<div class="feedback ${correct ? 'ok' : 'no'}">
         <strong>${correct ? '✓ 回答正确' : '✕ 回答错误'}</strong>
         <p>正确答案：<span class="answer-text">${esc(answerTexts)}</span></p>
-        ${others.length ? `<button class="others-toggle" data-action="toggle-others">${othersOpen ? '收起其他答案 ▴' : '展开其他答案 ▾'}</button>${othersHTML}` : ''}
+        ${othersAnswersHTML(q)}
         ${correct ? '<p class="fb-note">本题已计入正确统计。</p>' : '<p class="fb-note">本题已自动加入错题库，可在“错题重练”中复习。</p>'}
       </div>`;
     }
@@ -413,15 +441,8 @@
         <div class="progress"><i style="width:${percent}%"></i></div>
       </section>
       <section class="card question-card">
-        <div class="tag-row" style="margin-bottom:10px">
-          <span class="tag blue">${esc(q.id)}</span>
-          <span class="tag">章节 ${esc(q.section)}</span>
-          <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题 · 可多选，全部选对才得分' : '◉ 单选题 · 点击选项自动提交'}</span>
-          ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
-          ${rec && rec.wrongCount ? `<span class="tag red">历史错误 ${rec.wrongCount} 次</span>` : ''}
-          ${detailFlagHTML(q)}
-        </div>
-        <div class="question-text" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
+        ${rec && rec.wrongCount ? `<div class="tag-row" style="margin-bottom:8px"><span class="tag red">历史错误 ${rec.wrongCount} 次</span></div>` : ''}
+        ${questionRowHTML(q, detailFlagHTML(q))}
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
         <div class="options no-letter">${optionsHTML}</div>
         ${feedbackHTML}
@@ -527,15 +548,7 @@
     const answerTexts = q.answer.map(l => q.options[l]).join('；');
 
     return `<section class="card question-card study-card">
-      <div class="tag-row" style="margin-bottom:10px">
-        <span class="tag blue">${esc(q.id)}</span>
-        <span class="tag">章节 ${esc(q.section)}</span>
-        <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题' : '◉ 单选题'}</span>
-        ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
-        <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
-          ${detailFlagHTML(q)}
-      </div>
-      <div class="question-text" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
+      ${questionRowHTML(q, `<div class="qside-btns"><button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>${detailFlagHTML(q)}</div>`)}
       ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
       ${revealed
         ? `<div class="options">${optionsHTML}</div>
@@ -597,18 +610,14 @@
       const q = QMAP.get(qid);
       if (!q) return '';
       const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
-      const isMulti = q.type === 'multiple';
       return `<article class="study-list-item">
-        <div class="study-list-head">
-          <span class="tag blue">${start + i + 1}</span>
-          <span class="tag">${esc(q.id)}</span>
-          <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选' : '◉ 单选'}</span>
-          <span class="tag">章节 ${esc(q.section)}</span>
+        <div class="study-list-qrow">
+          <div class="study-list-q" data-qmark-host="${esc(q.id)}">${qNoHTML(q)}${questionTextHTML(q)}</div>
           ${detailFlagHTML(q)}
         </div>
-        <div class="study-list-q" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
         ${q.figure ? `<img class="study-list-fig" src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
-        <div class="study-list-a"><b>答案 ${esc(answerText(q))}</b>　${esc(answerTexts)}</div>
+        <div class="study-list-a"><b>答案</b>　${esc(answerTexts)}</div>
+        ${othersAnswersHTML(q)}
         ${explanationHTML(q)}
       </article>`;
     }).join('');
@@ -723,6 +732,31 @@
       ${active + mastered ? `<section class="card"><div class="card-header"><div><h2>危险操作</h2></div></div>
         <button class="btn danger" data-action="clear-wrong">清空错题库（不影响其他作答统计）</button></section>` : ''}
     </div>`;
+  }
+
+  // 已标注「需要更详细解析」的题目清单
+  function renderFlags() {
+    const flagged = QUESTIONS.filter(q => state.detailFlags && state.detailFlags[q.id]);
+    const rows = flagged.map(q => {
+      const exp = EXPLANATIONS[q.id];
+      return `<div class="result-item" data-action="review-result" data-id="${esc(q.id)}" style="cursor:pointer">
+        <div class="r-top">
+          <span class="r-title" data-qmark-host="${esc(q.id)}">${qNoHTML(q)}${questionTextHTML(q)}</span>
+          <span class="tag ${exp ? 'blue' : 'red'}">${exp ? '已有解析' : '暂无解析'}</span>
+        </div>
+        <div class="r-snippet">${exp ? esc(exp) : '（本题尚未生成解析，把清单发给助手即可补上）'}</div>
+      </div>`;
+    }).join('');
+    return `<div class="view"><section class="card">
+      <div class="card-header"><div><h2>已标注「需要更详细解析」</h2>
+        <p>共 ${flagged.length} 题。点「复制标注清单」把题号贴给助手，就能为你补写或加深解析；点题目可直接单题复习。</p></div></div>
+      <div class="btn-row" style="margin-bottom:14px">
+        <button class="btn primary" data-action="copy-flag-list" ${flagged.length ? '' : 'disabled'}>复制标注清单</button>
+        <button class="btn" data-action="nav" data-view="home">返回首页</button>
+      </div>
+      ${flagged.length ? `<div class="result-list">${rows}</div>`
+        : `<div class="empty-state"><div class="big">☆</div><h3>还没有标注的题目</h3><p>在刷题或速览页点题目右上角的「＋ 详解」即可标注。</p></div>`}
+    </section></div>`;
   }
 
   function renderSearch() {
@@ -1032,7 +1066,7 @@ ${rows || '<p>暂无错题</p>'}
     }
     if (action === 'toggle-others') {
       if (!session) return;
-      const id = session.ids[session.pos];
+      const id = el.dataset.id || session.ids[session.pos];
       if (!session.othersOpen) session.othersOpen = {};
       session.othersOpen[id] = !session.othersOpen[id];
       render(); return;
@@ -1123,6 +1157,17 @@ ${rows || '<p>暂无错题</p>'}
       session = null; saveState(); render(); toast('全部进度已清空');
     }
     else if (action === 'export-json') exportJSON();
+    else if (action === 'copy-flag-list') {
+      const list = QUESTIONS.filter(q => state.detailFlags && state.detailFlags[q.id])
+        .map(q => `${q.id}\t第${q.no}题\t${q.question.replace(/\s+/g, ' ')}`)
+        .join('\n');
+      const done = () => toast('标注清单已复制，粘贴给助手即可');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(list).then(done).catch(() => { download('标注清单.txt', list, 'text/plain'); toast('已下载 标注清单.txt'); });
+      } else {
+        download('标注清单.txt', list, 'text/plain'); toast('已下载 标注清单.txt');
+      }
+    }
     else if (action === 'import-json') document.getElementById('importInput').click();
     else if (action === 'export-html') { download(`B类错题库_${stamp()}.html`, buildWrongHTML(), 'text/html;charset=utf-8'); toast('错题库网页已生成'); }
     else if (action === 'preview-html') openWrongHTML();
