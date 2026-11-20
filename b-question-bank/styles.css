@@ -275,6 +275,28 @@ body.focus-mode .app-shell { padding-top: 8px; }
 body.focus-mode .practice-bar { padding: 10px 16px; }
 body.focus-mode .question-card { padding-top: 12px; }
 
+/* 学习模式：学习范围 / 卡片·速览切换 */
+.study-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 16px; }
+.study-seg { display: inline-flex; gap: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.study-seg-btn { border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.study-seg-btn:hover { color: var(--text); }
+.study-seg-btn.active { background: var(--surface); color: var(--primary); box-shadow: 0 1px 4px rgba(15, 23, 42, .1); }
+
+/* 主动回忆：揭晓前只给提示，不显示选项 */
+.recall-hint { margin: 18px 0 4px; padding: 18px; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--surface-2); color: var(--muted); font-size: 14px; line-height: 1.8; }
+.recall-hint b { color: var(--text); }
+.recall-hint span { display: block; margin-top: 6px; font-size: 12px; }
+kbd, .key-hint { display: inline-block; padding: 1px 6px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); color: var(--muted); font-size: 11px; font-family: inherit; }
+
+/* 速览：一页多题，题干 + 答案 */
+.study-list-item { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.study-list-item:last-of-type { border-bottom: 0; }
+.study-list-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.study-list-q { font-size: 14px; font-weight: 600; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.study-list-a { margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: var(--success-soft); color: #065f46; font-size: 13px; line-height: 1.7; }
+.study-list-a b { color: #065f46; }
+.study-list-fig { display: block; max-width: 100%; max-height: 260px; object-fit: contain; margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; }
+
 @media (max-width: 940px) {
   .app-shell { padding: 14px; }
   .layout { grid-template-columns: 1fr; }
@@ -282,6 +304,11 @@ body.focus-mode .question-card { padding-top: 12px; }
   .nav { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .topbar { flex-direction: column; align-items: flex-start; }
   .top-meta { justify-content: flex-start; }
+  .study-tools { padding: 8px 12px; gap: 8px; justify-content: flex-start; }
+  .study-seg { width: 100%; }
+  .study-seg-btn { flex: 1; padding: 8px 4px; font-size: 12px; }
+  .recall-hint { padding: 14px; font-size: 13px; }
+  .study-list-q { font-size: 14px; }
 }
 @media (max-width: 640px) {
   .app-shell { padding: 10px; }

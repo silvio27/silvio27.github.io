@@ -30,17 +30,28 @@
   let session = null;
   let view = 'home';
   let autoSubmitTimer = null;
-  const ui = { wrongFilter: 'active', wrongQuery: '', searchQuery: '', focusMode: false };
+  const STUDY_PAGE_SIZE = 20;
+  const ui = {
+    wrongFilter: 'active', wrongQuery: '', searchQuery: '',
+    focusMode: false, studyView: 'card', studyScope: 'all', studyPage: 0
+  };
+  if (state.study) {
+    if (state.study.view === 'card' || state.study.view === 'list') ui.studyView = state.study.view;
+    if (['all', 'weak', 'starred'].includes(state.study.scope)) ui.studyScope = state.study.scope;
+  }
 
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.records) return parsed;
+        if (parsed && parsed.records) {
+          if (!parsed.study) parsed.study = { pos: 0, view: 'card', scope: 'all' };
+          return parsed;
+        }
       }
     } catch (e) { /* 存储不可用时退回内存 */ }
-    return { records: {}, updatedAt: null };
+    return { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, updatedAt: null };
   }
 
   function saveState() {
@@ -156,7 +167,7 @@
           <div class="icon">⚑</div><h3>错题重练</h3><p>只练错题库中的待复习题目，答对两次自动标记掌握。</p><span class="mode-tag">待复习 ${wrongIds().length} 题</span>
         </button>
         <button class="mode-card study" data-action="start" data-mode="study">
-          <div class="icon">◉</div><h3>学习模式</h3><p>只看题目和正确答案，逐题浏览记忆，不判分、不进错题库。</p><span class="mode-tag">背题速览 · 直接看答案</span>
+          <div class="icon">◉</div><h3>学习模式</h3><p>先自己回忆答案再揭晓，记得更牢；也可切换速览快速通刷。不判分、不进错题库。</p><span class="mode-tag">主动回忆 · 速览 · 自动续学</span>
         </button>
         <button class="mode-card" data-action="nav" data-view="search">
           <div class="icon">⌕</div><h3>题目检索</h3><p>按题干、选项、题号或章节快速定位单题。</p><span class="mode-tag">单题精练</span>
@@ -279,61 +290,143 @@
     </div>`;
   }
 
+  function studyIds(scope) {
+    if (scope === 'starred') return QUESTIONS.filter(q => (state.records[q.id] || {}).starred).map(q => q.id);
+    if (scope === 'weak') {
+      const set = new Set();
+      QUESTIONS.forEach(q => {
+        const rec = state.records[q.id] || {};
+        if ((rec.wrongCount > 0 && !rec.resolved) || rec.starred) set.add(q.id);
+      });
+      return ALL_IDS.filter(id => set.has(id));
+    }
+    return ALL_IDS.slice();
+  }
+
+  function saveStudyPos() {
+    if (!state.study) state.study = { pos: 0, view: 'card', scope: 'all' };
+    state.study.pos = (session && session.mode === 'study' && session.pos < session.ids.length) ? session.pos : 0;
+    state.study.view = ui.studyView;
+    state.study.scope = ui.studyScope;
+    saveState();
+  }
+
+  function studyPageCount() {
+    return Math.max(1, Math.ceil(session.ids.length / STUDY_PAGE_SIZE));
+  }
+
   function renderStudy() {
-    const qid = session.ids[session.pos];
-    const q = QMAP.get(qid);
-    if (!q) return '<div class="card">题目数据异常</div>';
-    const rec = getRec(qid);
-    const isMulti = q.type === 'multiple';
-    const percent = session.ids.length ? Math.round((session.pos + 1) / session.ids.length * 100) : 0;
-
-    const optionsHTML = LETTERS.map(letter => {
-      const isAnswer = q.answer.includes(letter);
-      const cls = 'option locked' + (isAnswer ? ' is-answer is-correct' : '');
-      const mark = isAnswer ? `<span class="answer-flag">✓ 正确答案</span>` : '';
-      return `<div class="${cls}">
-        <span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span>
-      </div>`;
-    }).join('');
-
-    const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
-
+    const scopeNames = { all: '全部题目', weak: '错题 + 收藏', starred: '我的收藏' };
+    const pages = studyPageCount();
+    if (ui.studyPage >= pages) ui.studyPage = pages - 1;
+    const shown = ui.studyView === 'card'
+      ? `第 ${session.pos + 1} / ${session.ids.length} 题`
+      : `第 ${ui.studyPage + 1} / ${pages} 页`;
+    const percent = ui.studyView === 'card'
+      ? (session.ids.length ? Math.round((session.pos + 1) / session.ids.length * 100) : 0)
+      : Math.round((ui.studyPage + 1) / pages * 100);
     return `<div class="view">
       <section class="card practice-bar">
         <div class="practice-bar-top">
-          <h2>学习模式 · 背题速览</h2>
+          <h2>学习模式 · ${ui.studyView === 'card' ? '主动回忆' : '速览'}</h2>
           <div class="tag-row">
-            <span class="tag blue">第 ${session.pos + 1} / ${session.ids.length} 题</span>
-            <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
+            <span class="tag blue">${shown}</span>
             <button class="fold-btn" data-action="toggle-focus" title="折叠/展开顶部内容">${ui.focusMode ? '展开上方 ▾' : '折叠上方 ▴'}</button>
           </div>
         </div>
         <div class="progress"><i style="width:${percent}%"></i></div>
       </section>
-      <section class="card question-card study-card">
-        <div class="tag-row" style="margin-bottom:10px">
-          <span class="tag blue">${esc(q.id)}</span>
-          <span class="tag">章节 ${esc(q.section)}</span>
-          <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题' : '◉ 单选题'}</span>
-          ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
+      <div class="card study-tools">
+        <div class="study-seg">
+          ${Object.keys(scopeNames).map(s => `<button class="study-seg-btn ${ui.studyScope === s ? 'active' : ''}" data-action="study-scope" data-scope="${s}">${scopeNames[s]}</button>`).join('')}
         </div>
-        <div class="question-text">${esc(q.question)}</div>
-        ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
-        <div class="options">${optionsHTML}</div>
-        <div class="feedback ok study-answer">
-          <strong>正确答案：<span class="answer-line">${esc(answerText(q))}</span></strong>
-          <p class="answer-text">${esc(answerTexts)}</p>
+        <div class="study-seg">
+          <button class="study-seg-btn ${ui.studyView === 'card' ? 'active' : ''}" data-action="study-view" data-view="card">▤ 卡片</button>
+          <button class="study-seg-btn ${ui.studyView === 'list' ? 'active' : ''}" data-action="study-view" data-view="list">☰ 速览</button>
         </div>
-        <div class="btn-row spread practice-actions" style="margin-top:20px">
-          <div class="btn-row">
-            <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
-          </div>
-          <div class="btn-row">
-            <button class="btn primary" data-action="next">${session.pos === session.ids.length - 1 ? '完成浏览 ✓' : '下一题 →'}</button>
-          </div>
-        </div>
-      </section>
+      </div>
+      ${ui.studyView === 'card' ? renderStudyCard() : renderStudyList()}
     </div>`;
+  }
+
+  function renderStudyCard() {
+    const qid = session.ids[session.pos];
+    const q = QMAP.get(qid);
+    if (!q) return '<div class="card">题目数据异常</div>';
+    const rec = getRec(qid);
+    const isMulti = q.type === 'multiple';
+    const revealed = !!session.revealed[qid];
+
+    const optionsHTML = LETTERS.map(letter => {
+      const isAnswer = q.answer.includes(letter);
+      const cls = 'option locked' + (isAnswer ? ' is-answer is-correct' : '');
+      const mark = isAnswer ? `<span class="answer-flag">✓ 正确答案</span>` : '';
+      return `<div class="${cls}"><span class="letter">${letter}</span><span class="body">${esc(q.options[letter])}${mark}</span></div>`;
+    }).join('');
+    const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
+
+    return `<section class="card question-card study-card">
+      <div class="tag-row" style="margin-bottom:10px">
+        <span class="tag blue">${esc(q.id)}</span>
+        <span class="tag">章节 ${esc(q.section)}</span>
+        <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选题' : '◉ 单选题'}</span>
+        ${q.bankId ? `<span class="tag">题库编号 ${esc(q.bankId)}</span>` : ''}
+        <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
+      </div>
+      <div class="question-text">${esc(q.question)}</div>
+      ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
+      ${revealed
+        ? `<div class="options">${optionsHTML}</div>
+           <div class="feedback ok study-answer">
+             <strong>正确答案：<span class="answer-line">${esc(answerText(q))}</span></strong>
+             <p class="answer-text">${esc(answerTexts)}</p>
+           </div>`
+        : `<div class="recall-hint">
+             <b>先自己想一想</b>，想好了再揭晓 —— 回忆过的题记得更牢。
+             <span>按 <kbd>空格</kbd> 揭晓答案</span>
+           </div>`}
+      <div class="btn-row spread practice-actions" style="margin-top:20px">
+        <div class="btn-row">
+          <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
+        </div>
+        <div class="btn-row">
+          ${revealed
+            ? `<button class="btn primary" data-action="next">${session.pos === session.ids.length - 1 ? '完成本轮 ✓' : '下一题 →'}</button>`
+            : `<button class="btn primary" data-action="study-reveal">揭晓答案 <span class="key-hint">空格</span></button>`}
+        </div>
+      </div>
+    </section>`;
+  }
+
+  function renderStudyList() {
+    const start = ui.studyPage * STUDY_PAGE_SIZE;
+    const items = session.ids.slice(start, start + STUDY_PAGE_SIZE);
+    const rows = items.map((qid, i) => {
+      const q = QMAP.get(qid);
+      if (!q) return '';
+      const answerTexts = q.answer.map(l => `${l}. ${q.options[l]}`).join('　');
+      const isMulti = q.type === 'multiple';
+      return `<article class="study-list-item">
+        <div class="study-list-head">
+          <span class="tag blue">${start + i + 1}</span>
+          <span class="tag">${esc(q.id)}</span>
+          <span class="type-badge ${isMulti ? 'multi' : 'single'}">${isMulti ? '☑ 多选' : '◉ 单选'}</span>
+          <span class="tag">章节 ${esc(q.section)}</span>
+        </div>
+        <div class="study-list-q">${esc(q.question)}</div>
+        ${q.figure ? `<img class="study-list-fig" src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
+        <div class="study-list-a"><b>答案 ${esc(answerText(q))}</b>　${esc(answerTexts)}</div>
+      </article>`;
+    }).join('');
+    const pages = studyPageCount();
+    return `<section class="card study-list">
+      <p class="section-note" style="margin:0 0 12px">滚动浏览题干与答案，一页 ${STUDY_PAGE_SIZE} 题。按 <kbd>空格</kbd> 翻下一页。</p>
+      ${rows}
+      <div class="btn-row spread practice-actions" style="margin-top:16px">
+        <button class="btn" data-action="study-page-prev" ${ui.studyPage === 0 ? 'disabled' : ''}>← 上一页</button>
+        <button class="btn primary" data-action="study-page-next" ${ui.studyPage >= pages - 1 ? 'disabled' : ''}>下一页 →</button>
+      </div>
+    </section>`;
   }
 
   function renderCompletion() {
@@ -523,10 +616,20 @@
       title = section;
       ids = QUESTIONS.filter(q => q.section === section).map(q => q.id);
     } else if (mode === 'wrong') ids = wrongIds();
-    else if (mode === 'study') ids = opts.ids || ALL_IDS.slice();
+    else if (mode === 'study') {
+      const scope = opts.scope || ui.studyScope || 'all';
+      ui.studyScope = scope;
+      ids = opts.ids || studyIds(scope);
+      if (!ids.length) { toast('该范围暂无题目，已切换到全部题目'); ui.studyScope = 'all'; ids = ALL_IDS.slice(); }
+    }
     else if (mode === 'review') ids = opts.ids || (opts.id ? [opts.id] : []);
     if (!ids.length) { toast(mode === 'wrong' ? '错题库暂无待复习题目' : '没有可练习的题目'); return; }
-    session = { mode, title, ids, pos: 0, selected: {}, submitted: {}, answers: {}, correct: 0, wrong: 0, skipped: 0 };
+    let initialPos = 0;
+    if (mode === 'study' && !opts.ids && state.study) {
+      initialPos = Math.min(Math.max(0, state.study.pos || 0), ids.length - 1);
+    }
+    ui.studyPage = 0;
+    session = { mode, title, ids, pos: initialPos, selected: {}, submitted: {}, answers: {}, correct: 0, wrong: 0, skipped: 0, revealed: {} };
     view = 'practice';
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -612,7 +715,7 @@
   function exportJSON() {
     const payload = {
       app: 'B题库本地刷题', version: 1, exportedAt: new Date().toISOString(),
-      records: state.records
+      records: state.records, study: state.study
     };
     download(`B类题库进度_${stamp()}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
     toast('进度备份已导出');
@@ -639,6 +742,12 @@
           if (cur.wrongCount > 0 && !cur.wrongAt) cur.wrongAt = cur.lastAt;
           n++;
         });
+        if (data.study && typeof data.study === 'object') {
+          if (!state.study) state.study = { pos: 0, view: 'card', scope: 'all' };
+          if (typeof data.study.pos === 'number') state.study.pos = Math.max(0, Math.floor(data.study.pos));
+          if (data.study.view === 'card' || data.study.view === 'list') { state.study.view = data.study.view; ui.studyView = data.study.view; }
+          if (['all', 'weak', 'starred'].includes(data.study.scope)) { state.study.scope = data.study.scope; ui.studyScope = data.study.scope; }
+        }
         saveState();
         render();
         toast(`已导入 ${n} 条题目记录`);
@@ -693,12 +802,28 @@ ${rows || '<p>暂无错题</p>'}
     if (!el) return;
     const action = el.dataset.action;
     if (action === 'toggle-focus') { ui.focusMode = !ui.focusMode; render(); return; }
+    if (action === 'study-view') {
+      ui.studyView = el.dataset.view; ui.studyPage = 0;
+      if (state.study) { state.study.view = ui.studyView; saveState(); }
+      render(); return;
+    }
+    if (action === 'study-scope') {
+      ui.studyScope = el.dataset.scope; ui.studyPage = 0;
+      if (state.study) { state.study.scope = ui.studyScope; state.study.pos = 0; saveState(); }
+      startSession('study', { scope: ui.studyScope }); return;
+    }
+    if (action === 'study-reveal') {
+      if (!session || session.mode !== 'study') return;
+      session.revealed[session.ids[session.pos]] = true; render(); return;
+    }
+    if (action === 'study-page-prev') { ui.studyPage = Math.max(0, ui.studyPage - 1); render(); return; }
+    if (action === 'study-page-next') { ui.studyPage = Math.min(studyPageCount() - 1, ui.studyPage + 1); render(); return; }
     if (action === 'nav') { view = el.dataset.view; render(); }
     else if (action === 'start') startSession(el.dataset.mode, { section: el.dataset.section });
     else if (action === 'toggle-option') toggleOption(el.dataset.letter);
     else if (action === 'submit') submitAnswer();
-    else if (action === 'next') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos++; render(); }
-    else if (action === 'prev') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos = Math.max(0, session.pos - 1); render(); }
+    else if (action === 'next') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos++; if (session.mode === 'study') saveStudyPos(); render(); }
+    else if (action === 'prev') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos = Math.max(0, session.pos - 1); if (session.mode === 'study') saveStudyPos(); render(); }
     else if (action === 'skip') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.skipped++; session.pos++; render(); }
     else if (action === 'star') {
       if (!session || session.pos >= session.ids.length) return;
@@ -724,7 +849,9 @@ ${rows || '<p>暂无错题</p>'}
     }
     else if (action === 'reset-progress') {
       if (!confirm('确定清空全部进度、错题与收藏吗？此操作不可撤销。')) return;
-      state = { records: {}, updatedAt: null }; session = null; saveState(); render(); toast('全部进度已清空');
+      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, updatedAt: null };
+      ui.studyView = 'card'; ui.studyScope = 'all'; ui.studyPage = 0;
+      session = null; saveState(); render(); toast('全部进度已清空');
     }
     else if (action === 'export-json') exportJSON();
     else if (action === 'import-json') document.getElementById('importInput').click();
@@ -762,8 +889,22 @@ ${rows || '<p>暂无错题</p>'}
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
     const k = e.key.toLowerCase();
     if (session.mode === 'study') {
-      if (k === 'enter' || k === 'arrowright') { e.preventDefault(); if (session.pos < session.ids.length - 1) { session.pos++; render(); } }
-      else if (k === 'arrowleft') { e.preventDefault(); session.pos = Math.max(0, session.pos - 1); render(); }
+      if (ui.studyView === 'list') {
+        if (k === ' ' || k === 'enter' || k === 'arrowright') { e.preventDefault(); ui.studyPage = Math.min(studyPageCount() - 1, ui.studyPage + 1); render(); }
+        else if (k === 'arrowleft') { e.preventDefault(); ui.studyPage = Math.max(0, ui.studyPage - 1); render(); }
+        return;
+      }
+      const qid = session.ids[session.pos];
+      if (k === ' ' || k === 'enter') {
+        e.preventDefault();
+        if (!session.revealed[qid]) { session.revealed[qid] = true; render(); }
+        else if (session.pos < session.ids.length - 1) { session.pos++; saveStudyPos(); render(); }
+      } else if (k === 'arrowright') {
+        e.preventDefault();
+        if (session.pos < session.ids.length - 1) { session.pos++; saveStudyPos(); render(); }
+      } else if (k === 'arrowleft') {
+        e.preventDefault(); session.pos = Math.max(0, session.pos - 1); saveStudyPos(); render();
+      }
       return;
     }
     const idx = LETTERS.indexOf(k.toUpperCase());
