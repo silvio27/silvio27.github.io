@@ -374,6 +374,8 @@
     const masteredN = ALL_IDS.length - smartIds().length;
     const skimmed = !!(state.study && state.study.skimmed);
     const flaggedN = Object.keys(state.detailFlags || {}).length;
+    const fuIdx = firstUnansweredIdx(ALL_IDS);
+    const nextNo = fuIdx >= 0 ? ((QMAP.get(ALL_IDS[fuIdx]) || {}).no || fuIdx + 1) : 0;
 
     const s1 = skimmed ? 'done' : (attempted ? 'todo' : 'active');
     const s2 = attempted >= META.total ? 'done' : (attempted ? 'active' : 'todo');
@@ -435,9 +437,15 @@
         ${step(1, s1, '速览一遍 · 建立印象', '一页 20 题滚动看题干和答案，只求眼熟、不求记住。先扫一遍，后面刷题会快很多。', `共 ${Math.ceil(META.total / 20)} 页 · ${skimmed ? '已开始' : '未开始'}`, `
           <button class="btn primary" data-action="study-skim">进入速览 →</button>
           <button class="btn" data-action="start" data-mode="study">卡片背题</button>`)}
-        ${step(2, s2, '系统刷题 · 主力', '智能练习自动跳过已掌握的题，只练还没拿下的。单选点一下自动提交，多选选完提交；答错自动进错题库。', `已练 ${attempted} 题 · 正确率 ${acc === null ? '—' : acc + '%'}`, `
+        ${step(2, s2, '系统刷题 · 主力', '智能练习自动跳过已掌握的题，只练还没拿下的。单选点一下自动提交，多选选完提交；答错自动进错题库。', `已练 ${attempted} 题 · 正确率 ${acc === null ? '—' : acc + '%'}${nextNo ? ` · 下一道未答第 ${nextNo} 题` : ''}`, `
           <button class="btn primary" data-action="start" data-mode="smart">智能练习 →</button>
-          <button class="btn" data-action="start" data-mode="sequential">完整顺序</button>`)}
+          <button class="btn" data-action="start" data-mode="sequential">完整顺序</button>
+          <span class="start-at">
+            <span>从第</span>
+            <input id="startAtInput" type="number" min="1" max="${META.total}" inputmode="numeric" placeholder="${nextNo || 1}" aria-label="起始题号">
+            <span>题开始</span>
+            <button class="btn small" data-action="start-at">跳转</button>
+          </span>`)}
         ${step(3, s3, '清空错题 · 剔除不会的', '只练错题库里的题，连续答对两次自动标记“已掌握”并移出。这样剔除可靠，不会把蒙对的当会做。', `待复习 ${wrongN} 题 · 曾错 ${everWrong} 题`, `
           <button class="btn ${wrongN ? 'primary' : ''}" data-action="start" data-mode="wrong" ${wrongN ? '' : 'disabled'}>${wrongN ? '错题重练 →' : '暂无错题'}</button>`)}
         ${step(4, s4, '考前巩固 · 随机检验', '随机打乱全库检验真实水平，再用速览快速回顾错题和收藏。答案顺序不变，刷题时形成的眼熟感这时最管用。', `全库 ${META.total} 题随机`, `
@@ -918,6 +926,24 @@
     </div>`;
   }
 
+  // 未答过的题（attempts 为 0）在列表中的位置，全部答过则返回 -1
+  function firstUnansweredIdx(ids) {
+    return ids.findIndex(id => !((state.records[id] || {}).attempts > 0));
+  }
+
+  // 从首页输入框指定题号开始顺序练习
+  function startAtInput() {
+    const inp = document.getElementById('startAtInput');
+    const raw = (inp && inp.value || '').trim();
+    const n = parseInt(raw, 10);
+    if (!raw || !isFinite(n) || n < 1 || n > META.total) {
+      toast(`请输入 1–${META.total} 之间的题号`);
+      if (inp) inp.focus();
+      return;
+    }
+    startSession('sequential', { from: n });
+  }
+
   function startSession(mode, opts) {
     opts = opts || {};
     let ids = [], title = '';
@@ -940,13 +966,28 @@
     else if (mode === 'review') ids = opts.ids || (opts.id ? [opts.id] : []);
     if (!ids.length) { toast(mode === 'wrong' ? '错题库暂无待复习题目' : '没有可练习的题目'); return; }
     let initialPos = 0;
+    let jumpNote = '';
     if (mode === 'study' && !opts.ids && state.study) {
       initialPos = Math.min(Math.max(0, state.study.pos || 0), ids.length - 1);
+    } else if (opts.from) {
+      // 手动指定起始题号：按题目在题库中的序号查找，不在本轮范围则提示
+      const idx = ids.findIndex(id => (QMAP.get(id) || {}).no === opts.from);
+      if (idx < 0) { toast(`第 ${opts.from} 题不在本轮练习范围内`); return; }
+      initialPos = idx;
+    } else if (mode === 'sequential' || mode === 'smart' || mode === 'chapter') {
+      // 系统刷题默认落到第一道还没答过的题
+      const fu = firstUnansweredIdx(ids);
+      if (fu > 0) {
+        initialPos = fu;
+        const q = QMAP.get(ids[fu]);
+        jumpNote = `已跳到第 ${q ? q.no : fu + 1} 题（第一道未答过的题）`;
+      }
     }
     ui.studyPage = 0;
     session = { mode, title, ids, pos: initialPos, selected: {}, submitted: {}, answers: {}, correct: 0, wrong: 0, skipped: 0, revealed: {} };
     view = 'practice';
     render();
+    if (jumpNote) toast(jumpNote);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -1214,6 +1255,7 @@ ${rows || '<p>暂无错题</p>'}
     }
     if (action === 'nav') { view = el.dataset.view; render(); }
     else if (action === 'start') startSession(el.dataset.mode, { section: el.dataset.section });
+    else if (action === 'start-at') startAtInput();
     else if (action === 'toggle-option') toggleOption(el.dataset.letter);
     else if (action === 'submit') submitAnswer();
     else if (action === 'next') { if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; } session.pos++; if (session.mode === 'study') saveStudyPos(); render(); }
@@ -1394,6 +1436,13 @@ ${rows || '<p>暂无错题</p>'}
   document.addEventListener('mouseup', () => { setTimeout(onSelectionChange, 0); });
   document.addEventListener('touchend', () => { setTimeout(onSelectionChange, 150); });
   document.addEventListener('selectionchange', () => { setTimeout(onSelectionChange, 0); });
+
+  // 首页起始题号输入框：回车即开始
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const t = e.target;
+    if (t && t.id === 'startAtInput') { e.preventDefault(); startAtInput(); }
+  });
 
   document.addEventListener('keydown', e => {
     if (view !== 'practice' || !session || session.pos >= session.ids.length) return;

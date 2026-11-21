@@ -179,6 +179,18 @@ select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px 
 .inline-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
 .inline-form .field { flex: 1 1 260px; }
 
+/* 首页「从第 N 题开始」快捷入口 */
+.start-at { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.start-at input {
+  width: 72px; padding: 6px 8px; font-size: 13px; text-align: center;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--surface); color: var(--text); outline: none;
+}
+.start-at input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+.start-at .btn { flex: 0 0 auto; }
+.start-at input::-webkit-outer-spin-button,
+.start-at input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
 .practice-bar { display: grid; gap: 10px; }
 .practice-bar-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .practice-bar-top h2 { margin: 0; font-size: 18px; }
@@ -377,7 +389,10 @@ kbd, .key-hint { display: inline-block; padding: 1px 6px; border: 1px solid var(
   .road-step { padding: 14px; gap: 10px; }
   .step-num { width: 28px; height: 28px; font-size: 14px; }
   .step-foot .btn-row { width: 100%; }
-  .step-foot .btn-row .btn { flex: 1; text-align: center; }
+  .step-foot .btn-row .btn { flex: 1 1 auto; text-align: center; white-space: nowrap; }
+  .start-at { flex: 1 1 100%; justify-content: flex-start; }
+  .start-at input { width: 64px; }
+  .step-foot .btn-row .start-at .btn { flex: 0 0 auto; }
   .next-up { gap: 8px; }
   .next-up .btn { width: 100%; }
 }
