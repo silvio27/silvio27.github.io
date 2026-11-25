@@ -85,7 +85,7 @@
   const STUDY_PAGE_SIZES = [10, 20, 50, 100, 'all'];
   const DEFAULT_STUDY_PAGE_SIZE = 20;
   const ui = {
-    wrongFilter: 'active', wrongQuery: '', searchQuery: '',
+    wrongFilter: 'active', wrongQuery: '', searchQuery: '', trashQuery: '',
     focusMode: false, studyView: 'card', studyScope: 'all', studyPage: 0,
     studyPageSize: DEFAULT_STUDY_PAGE_SIZE
   };
@@ -106,6 +106,9 @@
           if (!parsed.marks || typeof parsed.marks !== 'object' || Array.isArray(parsed.marks)) parsed.marks = {};
           if (typeof parsed.showMarks !== 'boolean') parsed.showMarks = true;
           if (!parsed.detailFlags || typeof parsed.detailFlags !== 'object' || Array.isArray(parsed.detailFlags)) parsed.detailFlags = {};
+          if (!parsed.memos || typeof parsed.memos !== 'object' || Array.isArray(parsed.memos)) parsed.memos = {};
+          if (!parsed.answerMarks || typeof parsed.answerMarks !== 'object' || Array.isArray(parsed.answerMarks)) parsed.answerMarks = {};
+          if (!parsed.trash || typeof parsed.trash !== 'object' || Array.isArray(parsed.trash)) parsed.trash = {};
           // v1 → v2：旧版把题号徽章（如 695）算进了题干文本，导致标记整体右移「题号位数」个字。
           // 一次性回正，避免历史标记错位。
           if (parsed.marksVersion !== 2) {
@@ -129,7 +132,11 @@
         }
       }
     } catch (e) { /* 存储不可用时退回内存 */ }
-    return { records: {}, study: { pos: 0, view: 'card', scope: 'all' }, marks: {}, showMarks: true, detailFlags: {}, marksVersion: 2, updatedAt: null };
+    return {
+      records: {}, study: { pos: 0, view: 'card', scope: 'all' },
+      marks: {}, showMarks: true, detailFlags: {}, marksVersion: 2,
+      memos: {}, answerMarks: {}, trash: {}, updatedAt: null
+    };
   }
 
   function saveState() {
@@ -156,26 +163,105 @@
 
   function wrongIds() {
     return Object.keys(state.records)
-      .filter(id => QMAP.has(id) && state.records[id].wrongCount > 0 && !state.records[id].resolved)
+      .filter(id => QMAP.has(id) && !isTrashed(id) && state.records[id].wrongCount > 0 && !state.records[id].resolved)
       .sort((a, b) => new Date(state.records[b].wrongAt || 0) - new Date(state.records[a].wrongAt || 0));
   }
 
   function masteredIds() {
     return Object.keys(state.records)
-      .filter(id => QMAP.has(id) && state.records[id].wrongCount > 0 && state.records[id].resolved)
+      .filter(id => QMAP.has(id) && !isTrashed(id) && state.records[id].wrongCount > 0 && state.records[id].resolved)
       .sort((a, b) => new Date(state.records[b].lastAt || 0) - new Date(state.records[a].lastAt || 0));
   }
 
   // 智能练习：连续答对 2 次及以上视为已掌握，自动跳过
   function isMastered(id) { return ((state.records[id] || {}).streak || 0) >= 2; }
-  function smartIds() { return ALL_IDS.filter(id => !isMastered(id)); }
+  function smartIds() { return activeIds().filter(id => !isMastered(id)); }
 
-  function toast(msg) {
+  // ===== 回收站：被删除的题目不进入任何刷题/速览/检索范围 =====
+  function isTrashed(id) { return !!(state.trash && state.trash[id]); }
+  function activeIds() { return ALL_IDS.filter(id => !isTrashed(id)); }
+  function trashedIds() {
+    return Object.keys(state.trash || {})
+      .filter(id => QMAP.has(id) && state.trash[id])
+      .sort((a, b) => new Date(state.trash[b]) - new Date(state.trash[a]));
+  }
+  function trashCount() { return trashedIds().length; }
+
+  // ===== 记忆标注 =====
+  function memoText(qid) { return String((state.memos && state.memos[qid]) || ''); }
+  function answerMarkRanges(qid, origLetter) {
+    const byLetter = state.answerMarks && state.answerMarks[qid];
+    const ranges = byLetter && byLetter[origLetter];
+    return Array.isArray(ranges) ? ranges : [];
+  }
+  function memoKeyFragments(q) {
+    const byLetter = (state.answerMarks && state.answerMarks[q.id]) || {};
+    const out = [];
+    dispLetters(q).forEach(dl => {
+      if (!isRight(q, dl)) return;
+      const orig = q.dispMap[dl], text = String(q.disp[dl] || '');
+      normalizeRanges(answerMarkRanges(q.id, orig), text.length).forEach(r => {
+        const frag = text.slice(r.s, r.e).trim();
+        if (frag) out.push(frag);
+      });
+    });
+    return out;
+  }
+  function hasMemo(qid) {
+    const q = QMAP.get(qid);
+    if (!q) return false;
+    return !!memoText(qid).trim() || memoKeyFragments(q).length > 0;
+  }
+
+  // 在答案文字中标出记忆关键点；editable 时关键点可点击取消（仅编辑弹窗内）
+  function answerMarkedHTML(q, dl, editable, rangesOverride) {
+    const text = String(q.disp[dl] || '');
+    const orig = q.dispMap[dl];
+    const ranges = normalizeRanges(rangesOverride || answerMarkRanges(q.id, orig), text.length);
+    if (!ranges.length) return esc(text);
+    let html = '', pos = 0;
+    for (const r of ranges) {
+      if (r.s > pos) html += esc(text.slice(pos, r.s));
+      const attrs = editable
+        ? ` data-letter="${esc(orig)}" data-s="${r.s}" data-e="${r.e}" title="点击取消关键点"` : '';
+      html += `<mark class="akey"${attrs}>${esc(text.slice(r.s, r.e))}</mark>`;
+      pos = r.e;
+    }
+    if (pos < text.length) html += esc(text.slice(pos));
+    return html;
+  }
+
+  // 标注展示块：答题后 / 揭晓后 / 速览中显示
+  function memoBoxHTML(q) {
+    const text = memoText(q.id), keys = memoKeyFragments(q);
+    if (!text.trim() && !keys.length) return '';
+    return `<div class="memo-box">
+      <div class="memo-head"><b>记忆标注</b><button class="memo-edit" data-action="memo-edit" data-id="${esc(q.id)}">编辑</button></div>
+      ${text.trim() ? `<div class="memo-text">${esc(text)}</div>` : ''}
+      ${keys.length ? `<div class="memo-keys"><span>答案关键</span>${keys.map(k => `<em>${esc(k)}</em>`).join('')}</div>` : ''}
+    </div>`;
+  }
+
+  function memoBtnHTML(q) {
+    const on = hasMemo(q.id);
+    return `<button class="memo-btn ${on ? 'on' : ''}" data-action="memo-edit" data-id="${esc(q.id)}" title="记忆标注">${on ? '记忆 ✓' : '＋记忆'}</button>`;
+  }
+
+  function toast(msg, action) {
     const el = document.getElementById('toast');
-    el.textContent = msg;
+    el.textContent = '';
+    el.appendChild(document.createTextNode(msg));
+    if (action && action.label && typeof action.onAction === 'function') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', () => { el.classList.remove('show'); action.onAction(); });
+      el.appendChild(btn);
+    }
     el.classList.add('show');
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.classList.remove('show'), 2400);
+    toast._t = setTimeout(() => el.classList.remove('show'), action ? 6000 : 2400);
   }
 
   function esc(s) {
@@ -341,13 +427,17 @@
     const acc = totalCorrect + totalWrong ? Math.round(totalCorrect / (totalCorrect + totalWrong) * 100) : null;
 
     document.getElementById('topMeta').innerHTML = `
-      <span class="meta-chip">总题数 <b>${META.total}</b></span>
+      <span class="meta-chip">总题数 <b>${activeIds().length}</b>${trashCount() ? `<small>（回收站 ${trashCount()}）</small>` : ''}</span>
       <span class="meta-chip">单选 <b>${META.single}</b></span>
       <span class="meta-chip">多选 <b>${META.multiple}</b></span>
       <span class="meta-chip">已练 <b>${attempted}</b></span>`;
     document.getElementById('navWrongCount').textContent = wrongIds().length;
     const navFlagEl = document.getElementById('navFlagCount');
     if (navFlagEl) navFlagEl.textContent = Object.keys(state.detailFlags || {}).length;
+    const navMemoEl = document.getElementById('navMemoCount');
+    if (navMemoEl) navMemoEl.textContent = activeIds().filter(hasMemo).length;
+    const navTrashEl = document.getElementById('navTrashCount');
+    if (navTrashEl) navTrashEl.textContent = trashCount();
     document.getElementById('quickStats').innerHTML = `
       <h3>学习概览</h3>
       <div class="mini-stat"><span>已练题目</span><b>${attempted}</b></div>
@@ -361,6 +451,8 @@
     else if (view === 'search') main.innerHTML = renderSearch();
     else if (view === 'stats') main.innerHTML = renderStats();
     else if (view === 'flags') main.innerHTML = renderFlags();
+    else if (view === 'memos') main.innerHTML = renderMemos();
+    else if (view === 'trash') main.innerHTML = renderTrash();
   }
 
   function renderHome() {
@@ -370,21 +462,22 @@
     const totalCorrect = recs.reduce((s, r) => s + (r.correct || 0), 0);
     const acc = totalAns ? Math.round(totalCorrect / totalAns * 100) : null;
     const wrongN = wrongIds().length;
+    const activeCount = activeIds().length;
     const everWrong = recs.filter(r => (r.wrongCount || 0) > 0).length;
-    const masteredN = ALL_IDS.length - smartIds().length;
+    const masteredN = activeIds().length - smartIds().length;
     const skimmed = !!(state.study && state.study.skimmed);
     const flaggedN = Object.keys(state.detailFlags || {}).length;
-    const fuIdx = firstUnansweredIdx(ALL_IDS);
-    const nextNo = fuIdx >= 0 ? ((QMAP.get(ALL_IDS[fuIdx]) || {}).no || fuIdx + 1) : 0;
+    const fuIdx = firstUnansweredIdx(activeIds());
+    const nextNo = fuIdx >= 0 ? ((QMAP.get(activeIds()[fuIdx]) || {}).no || fuIdx + 1) : 0;
 
     const s1 = skimmed ? 'done' : (attempted ? 'todo' : 'active');
-    const s2 = attempted >= META.total ? 'done' : (attempted ? 'active' : 'todo');
+    const s2 = attempted >= activeCount ? 'done' : (attempted ? 'active' : 'todo');
     const s3 = (everWrong && !wrongN) ? 'done' : (wrongN ? 'active' : 'todo');
     const s4 = (s1 === 'done' && s2 === 'done' && s3 === 'done') ? 'active' : 'todo';
 
     let recN = 1;
     if (skimmed) recN = 2;
-    if (attempted >= META.total) recN = wrongN ? 3 : 4;
+    if (attempted >= activeCount) recN = wrongN ? 3 : 4;
     else if (wrongN >= 5 && attempted > 0) recN = 3;
     const recText = {
       1: '先花十几分钟速览一遍，知道考什么、答案长什么样，不用刻意记。',
@@ -419,7 +512,7 @@
       <section class="card road-dashboard">
         <div class="dash-grid">
           <div><span>速览</span><b style="color:${skimmed ? 'var(--success)' : 'var(--muted)'}">${skimmed ? '已完成' : '未开始'}</b></div>
-          <div><span>已练题目</span><b>${attempted} / ${META.total}</b></div>
+          <div><span>已练题目</span><b>${attempted} / ${activeCount}</b></div>
           <div><span>待复习错题</span><b style="color:${wrongN ? 'var(--danger)' : 'var(--success)'}">${wrongN}</b></div>
           <div><span>已掌握</span><b style="color:var(--success)">${masteredN}</b></div>
         </div>
@@ -434,7 +527,7 @@
       </section>
 
       <div class="roadmap">
-        ${step(1, s1, '速览一遍 · 建立印象', '一页 20 题滚动看题干和答案，只求眼熟、不求记住。先扫一遍，后面刷题会快很多。', `共 ${Math.ceil(META.total / 20)} 页 · ${skimmed ? '已开始' : '未开始'}`, `
+        ${step(1, s1, '速览一遍 · 建立印象', '一页 20 题滚动看题干和答案，只求眼熟、不求记住。先扫一遍，后面刷题会快很多。', `共 ${Math.ceil(activeCount / 20)} 页 · ${skimmed ? '已开始' : '未开始'}`, `
           <button class="btn primary" data-action="study-skim">进入速览 →</button>
           <button class="btn" data-action="start" data-mode="study">卡片背题</button>`)}
         ${step(2, s2, '系统刷题 · 主力', '智能练习自动跳过已掌握的题，只练还没拿下的。单选点一下自动提交，多选选完提交；答错自动进错题库。', `已练 ${attempted} 题 · 正确率 ${acc === null ? '—' : acc + '%'}${nextNo ? ` · 下一道未答第 ${nextNo} 题` : ''}`, `
@@ -448,7 +541,7 @@
           </span>`)}
         ${step(3, s3, '清空错题 · 剔除不会的', '只练错题库里的题，连续答对两次自动标记“已掌握”并移出。这样剔除可靠，不会把蒙对的当会做。', `待复习 ${wrongN} 题 · 曾错 ${everWrong} 题`, `
           <button class="btn ${wrongN ? 'primary' : ''}" data-action="start" data-mode="wrong" ${wrongN ? '' : 'disabled'}>${wrongN ? '错题重练 →' : '暂无错题'}</button>`)}
-        ${step(4, s4, '考前巩固 · 随机检验', '随机打乱全库检验真实水平，再用速览快速回顾错题和收藏。答案顺序不变，刷题时形成的眼熟感这时最管用。', `全库 ${META.total} 题随机`, `
+        ${step(4, s4, '考前巩固 · 随机检验', '随机打乱全库检验真实水平，再用速览快速回顾错题和收藏。答案顺序不变，刷题时形成的眼熟感这时最管用。', `全库 ${activeCount} 题随机`, `
           <button class="btn primary" data-action="start" data-mode="random">随机练习 →</button>
           <button class="btn" data-action="study-skim">速览回顾</button>`)}
       </div>
@@ -460,6 +553,8 @@
           <button class="btn" data-action="nav" data-view="stats">学习统计</button>
           <button class="btn" data-action="nav" data-view="wrong">错题库</button>
           <button class="btn" data-action="nav" data-view="flags">已标注详解 ${flaggedN ? `<b style="color:#b45309">${flaggedN}</b>` : '(0)'}</button>
+          <button class="btn" data-action="nav" data-view="memos">记忆标注 ${activeIds().filter(hasMemo).length ? `<b style="color:#b45309">${activeIds().filter(hasMemo).length}</b>` : '(0)'}</button>
+          <button class="btn" data-action="nav" data-view="trash">题目管理 / 回收站 ${trashCount() ? `<b style="color:var(--danger)">${trashCount()}</b>` : ''}</button>
         </div>
         <div class="inline-form" style="margin-top:16px">
           <div class="field"><label for="chapterSelect">按章节练习</label>
@@ -518,8 +613,9 @@
       }
       const mark = submitted && isRight(q, letter)
         ? `<span class="answer-flag">✓ 正确答案</span>` : '';
+      const bodyHTML = submitted && isRight(q, letter) ? answerMarkedHTML(q, letter, false) : esc(q.disp[letter]);
       return `<button class="${cls}" data-action="toggle-option" data-letter="${letter}" ${submitted ? 'disabled' : ''}>
-        <span class="letter">${letter}</span><span class="body">${esc(q.disp[letter])}${mark}</span>
+        <span class="letter">${letter}</span><span class="body">${bodyHTML}${mark}</span>
       </button>`;
     }).join('');
 
@@ -532,6 +628,7 @@
             <span class="tag">本轮正确 ${session.correct}</span>
             <span class="tag red">本轮错误 ${session.wrong}</span>
             <button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>
+            ${memoBtnHTML(q)}
             <button class="mark-toggle ${state.showMarks !== false ? 'on' : ''}" data-action="toggle-marks" title="开启/关闭题干标记显示">${state.showMarks !== false ? '标记 开' : '标记 关'}</button>
             <button class="fold-btn" data-action="toggle-focus" title="折叠/展开顶部内容">${ui.focusMode ? '展开上方 ▾' : '折叠上方 ▴'}</button>
           </div>
@@ -544,6 +641,7 @@
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
         <div class="options no-letter">${optionsHTML}</div>
         ${submitted ? explanationHTML(q, true) : ''}
+        ${submitted ? memoBoxHTML(q) : ''}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
             <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
@@ -569,9 +667,9 @@
         const rec = state.records[q.id] || {};
         if ((rec.wrongCount > 0 && !rec.resolved) || rec.starred) set.add(q.id);
       });
-      return ALL_IDS.filter(id => set.has(id));
+      return activeIds().filter(id => set.has(id));
     }
-    return ALL_IDS.slice();
+    return activeIds().slice();
   }
 
   function saveStudyPos() {
@@ -640,15 +738,17 @@
       const isAnswer = isRight(q, letter);
       const cls = 'option locked' + (isAnswer ? ' is-answer is-correct' : '');
       const mark = isAnswer ? `<span class="answer-flag">✓ 正确答案</span>` : '';
-      return `<div class="${cls}"><span class="letter">${letter}</span><span class="body">${esc(q.disp[letter])}${mark}</span></div>`;
+      const bodyHTML = isAnswer ? answerMarkedHTML(q, letter, false) : esc(q.disp[letter]);
+      return `<div class="${cls}"><span class="letter">${letter}</span><span class="body">${bodyHTML}${mark}</span></div>`;
     }).join('');
 
     return `<section class="card question-card study-card">
-      ${questionRowHTML(q, `<div class="qside-btns"><button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>${detailFlagHTML(q)}</div>`)}
+      ${questionRowHTML(q, `<div class="qside-btns"><button class="star-btn ${rec && rec.starred ? 'on' : ''}" data-action="star" title="收藏本题">★</button>${memoBtnHTML(q)}${detailFlagHTML(q)}</div>`)}
       ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
       ${revealed
         ? `<div class="options">${optionsHTML}</div>
-           ${explanationHTML(q, true)}`
+           ${explanationHTML(q, true)}
+           ${memoBoxHTML(q)}`
         : `<div class="recall-hint">
              <b>先自己想一想</b>，想好了再揭晓 —— 回忆过的题记得更牢。
              <span>按 <kbd>空格</kbd> 揭晓答案</span>
@@ -703,19 +803,20 @@
       if (!q) return '';
       // 正确答案逐行展示；选项已被打乱，字母不再有固定含义，故不显示 A/B/C/D
       const answerList = (q.dispAnswer || []).map(l =>
-        `<div class="al-item"><span class="at">${esc(q.disp[l])}</span></div>`).join('');
+        `<div class="al-item"><span class="at">${answerMarkedHTML(q, l, false)}</span></div>`).join('');
       return `<article class="study-list-item">
         <div class="study-list-qrow">
           <div class="study-list-qline">
             ${qNoHTML(q)}${typeTagHTML(q)}
             <div class="study-list-q" data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</div>
           </div>
-          ${detailFlagHTML(q)}
+          ${memoBtnHTML(q)}${detailFlagHTML(q)}
         </div>
         ${q.figure ? `<img class="study-list-fig" src="${figureSrc(q.figure)}" alt="题目附图">` : ''}
         <div class="study-list-a"><div class="al-title">答案</div>${answerList}</div>
         ${othersAnswersHTML(q)}
         ${explanationHTML(q, true)}
+        ${memoBoxHTML(q)}
       </article>`;
     }).join('');
     return `<section class="card study-list">
@@ -833,7 +934,7 @@
 
   // 已标注「需要更详细解析」的题目清单
   function renderFlags() {
-    const flagged = QUESTIONS.filter(q => state.detailFlags && state.detailFlags[q.id]);
+    const flagged = activeIds().map(id => QMAP.get(id)).filter(q => state.detailFlags && state.detailFlags[q.id]);
     const rows = flagged.map(q => {
       const exp = EXPLANATIONS[q.id];
       return `<div class="result-item" data-action="review-result" data-id="${esc(q.id)}" style="cursor:pointer">
@@ -856,12 +957,112 @@
     </section></div>`;
   }
 
+  // ===== 记忆标注清单 =====
+  function copyMemoList() {
+    const lines = activeIds().filter(hasMemo).map(id => {
+      const q = QMAP.get(id), keys = memoKeyFragments(q);
+      return `第${q.no}题\t${q.question.replace(/\s+/g, ' ')}\t记忆：${memoText(id).replace(/\s+/g, ' ')}${keys.length ? '\t答案关键：' + keys.join('、') : ''}`;
+    });
+    const text = lines.join('\n');
+    const done = () => toast('记忆清单已复制');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => { download('记忆标注清单.txt', text, 'text/plain'); toast('已下载 记忆标注清单.txt'); });
+    } else {
+      download('记忆标注清单.txt', text, 'text/plain'); toast('已下载 记忆标注清单.txt');
+    }
+  }
+
+  function renderMemos() {
+    const ids = activeIds().filter(hasMemo).sort((a, b) => QMAP.get(a).no - QMAP.get(b).no);
+    const rows = ids.map(id => {
+      const q = QMAP.get(id);
+      return `<article class="memo-list-item">
+        <div class="memo-list-head">
+          <span class="memo-list-title">${qNoHTML(q)} ${esc(q.question)}</span>
+          <span class="btn-row">
+            <button class="btn small ghost" data-action="review-result" data-id="${esc(id)}">单题练习</button>
+          </span>
+        </div>
+        ${memoBoxHTML(q)}
+      </article>`;
+    }).join('');
+    return `<div class="view"><section class="card">
+      <div class="card-header"><div><h2>记忆标注</h2>
+        <p>共 ${ids.length} 题。标注的口诀与答案关键点会跟着题目走；答题提交后与速览中自动显示。</p></div></div>
+      <div class="btn-row" style="margin-bottom:14px">
+        <button class="btn primary" data-action="copy-memo-list" ${ids.length ? '' : 'disabled'}>复制记忆清单</button>
+        <button class="btn" data-action="nav" data-view="home">返回首页</button>
+      </div>
+      ${ids.length ? `<div class="memo-list">${rows}</div>`
+        : `<div class="empty-state"><div class="big">✎</div><h3>还没有记忆标注</h3><p>刷题页点「＋记忆」，写口诀或在正确答案上划出关键点即可。</p></div>`}
+    </section></div>`;
+  }
+
+  // ===== 题目管理与回收站 =====
+  function renderTrash() {
+    const trashed = trashedIds();
+    const kw = ui.trashQuery.trim().toLowerCase();
+    const candidates = activeIds().map(id => QMAP.get(id)).filter(q => {
+      if (!kw) return true;
+      return [q.no, q.id, q.bankId, q.question, ...LETTERS.map(l => q.options[l])].join(' ').toLowerCase().includes(kw);
+    }).slice(0, 60);
+    const candidateRows = candidates.map(q => `<div class="manage-row">
+      <span class="manage-title">${qNoHTML(q)} ${esc(q.question)}</span>
+      <button class="btn small danger" data-action="trash-delete" data-id="${esc(q.id)}">移入回收站</button>
+    </div>`).join('');
+    const trashRows = trashed.map(id => {
+      const q = QMAP.get(id);
+      return `<div class="manage-row trashed">
+        <span class="manage-title">${qNoHTML(q)} ${esc(q.question)}<small>删除于 ${formatDate(state.trash[id])}</small></span>
+        <button class="btn small primary" data-action="trash-restore" data-id="${esc(id)}">恢复</button>
+      </div>`;
+    }).join('');
+    return `<div class="view">
+      <section class="card">
+        <div class="card-header"><div><h2>题目管理</h2>
+          <p>这里删除的题目不进入速览、刷题、错题重练、考前巩固与检索；误删可在回收站恢复，删除后也能立刻「撤回」。</p></div></div>
+        <div class="stat-grid" style="margin-bottom:16px">
+          <div class="stat-box"><span>在库题目</span><b>${activeIds().length}</b></div>
+          <div class="stat-box"><span>回收站</span><b style="color:var(--danger)">${trashed.length}</b></div>
+        </div>
+        <div class="search-box" style="margin-bottom:12px">
+          <input type="search" id="trashQueryInput" value="${esc(ui.trashQuery)}" placeholder="输入题号或关键词筛选要删除的题目…">
+        </div>
+        ${candidateRows ? `<div class="manage-list">${candidateRows}</div>` : `<p class="section-note">没有匹配的题目。默认只列出前 60 条，输入题号可精确定位。</p>`}
+      </section>
+      <section class="card">
+        <div class="card-header"><div><h2>回收站</h2><p>共 ${trashed.length} 题，点「恢复」即可放回全部练习范围。</p></div></div>
+        ${trashRows ? `<div class="manage-list">${trashRows}</div>` : `<p class="section-note">回收站是空的。</p>`}
+      </section>
+    </div>`;
+  }
+
+  function trashQuestion(id) {
+    const q = QMAP.get(id);
+    if (!q || isTrashed(id)) return;
+    state.trash[id] = new Date().toISOString();
+    if (session) {
+      session.ids = session.ids.filter(x => x !== id);
+      if (session.pos >= session.ids.length) session.pos = Math.max(0, session.ids.length - 1);
+    }
+    saveState(); render();
+    toast(`第 ${q.no} 题已移入回收站`, { label: '撤回', onAction: () => restoreQuestion(id, true) });
+  }
+
+  function restoreQuestion(id, undone) {
+    if (!state.trash || !state.trash[id]) return;
+    delete state.trash[id];
+    saveState(); render();
+    const q = QMAP.get(id);
+    toast(undone ? `已撤回，第 ${q ? q.no : ''} 题已恢复` : `第 ${q ? q.no : ''} 题已恢复`);
+  }
+
   function renderSearch() {
     const kw = ui.searchQuery.trim();
     let results = [];
     if (kw) {
       const lower = kw.toLowerCase();
-      results = QUESTIONS.filter(q => {
+      results = activeIds().map(id => QMAP.get(id)).filter(q => {
         const hay = [q.id, q.bankId, q.section, q.question, ...LETTERS.map(l => q.options[l])].join(' ').toLowerCase();
         return hay.includes(lower);
       }).slice(0, 80);
@@ -894,7 +1095,7 @@
     const starred = Object.values(state.records).filter(r => r.starred).length;
 
     const chapterStats = SECTIONS.map(s => {
-      const ids = QUESTIONS.filter(q => q.section === s).map(q => q.id);
+      const ids = activeIds().filter(id => (QMAP.get(id) || {}).section === s);
       let done = 0, c = 0, w = 0;
       ids.forEach(id => { const r = getRec(id); if (r && r.attempts) { done++; c += r.correct; w += r.wrong; } });
       return { section: s, total: ids.length, done, correct: c, wrong: w, rate: c + w ? Math.round(c / (c + w) * 100) : null };
@@ -947,23 +1148,23 @@
   function startSession(mode, opts) {
     opts = opts || {};
     let ids = [], title = '';
-    if (mode === 'sequential') ids = ALL_IDS.slice();
+    if (mode === 'sequential') ids = activeIds().slice();
     else if (mode === 'smart') ids = smartIds();
-    else if (mode === 'random') ids = shuffle(ALL_IDS.slice());
+    else if (mode === 'random') ids = shuffle(activeIds().slice());
     else if (mode === 'chapter') {
       const sel = document.getElementById('chapterSelect');
       const section = opts.section || (sel && sel.value);
       if (!section) { toast('请先选择章节'); return; }
       title = section;
-      ids = QUESTIONS.filter(q => q.section === section).map(q => q.id);
+      ids = activeIds().filter(id => (QMAP.get(id) || {}).section === section);
     } else if (mode === 'wrong') ids = wrongIds();
     else if (mode === 'study') {
       const scope = opts.scope || ui.studyScope || 'all';
       ui.studyScope = scope;
       ids = opts.ids || studyIds(scope);
-      if (!ids.length) { toast('该范围暂无题目，已切换到全部题目'); ui.studyScope = 'all'; ids = ALL_IDS.slice(); }
+      if (!ids.length) { toast('该范围暂无题目，已切换到全部题目'); ui.studyScope = 'all'; ids = activeIds().slice(); }
     }
-    else if (mode === 'review') ids = opts.ids || (opts.id ? [opts.id] : []);
+    else if (mode === 'review') ids = (opts.ids || (opts.id ? [opts.id] : [])).filter(id => !isTrashed(id));
     if (!ids.length) { toast(mode === 'wrong' ? '错题库暂无待复习题目' : '没有可练习的题目'); return; }
     let initialPos = 0;
     let jumpNote = '';
@@ -1074,7 +1275,8 @@
       records: state.records, study: state.study,
       marks: state.marks || {}, showMarks: state.showMarks !== false,
       marksVersion: 2,
-      detailFlags: state.detailFlags || {}
+      detailFlags: state.detailFlags || {},
+      memos: state.memos || {}, answerMarks: state.answerMarks || {}, trash: state.trash || {}
     };
     download(`B类题库进度_${stamp()}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
     toast('进度备份已导出');
@@ -1121,6 +1323,32 @@
         if (data.detailFlags && typeof data.detailFlags === 'object' && !Array.isArray(data.detailFlags)) {
           state.detailFlags = {};
           Object.keys(data.detailFlags).forEach(id => { if (QMAP.has(id) && data.detailFlags[id]) state.detailFlags[id] = true; });
+        }
+        if (data.memos && typeof data.memos === 'object' && !Array.isArray(data.memos)) {
+          state.memos = {};
+          Object.keys(data.memos).forEach(id => {
+            const text = String(data.memos[id] || '').trim();
+            if (QMAP.has(id) && text) state.memos[id] = text;
+          });
+        }
+        if (data.answerMarks && typeof data.answerMarks === 'object' && !Array.isArray(data.answerMarks)) {
+          state.answerMarks = {};
+          Object.keys(data.answerMarks).forEach(id => {
+            if (!QMAP.has(id)) return;
+            const q = QMAP.get(id), byLetter = data.answerMarks[id], clean = {};
+            if (!byLetter || typeof byLetter !== 'object') return;
+            Object.keys(byLetter).forEach(letter => {
+              const text = String(q.options[letter] || '');
+              const rng = normalizeRanges(Array.isArray(byLetter[letter]) ? byLetter[letter] : [], text.length);
+              if (rng.length) clean[letter] = rng;
+            });
+            if (Object.keys(clean).length) state.answerMarks[id] = clean;
+          });
+        }
+        if (data.trash && typeof data.trash === 'object' && !Array.isArray(data.trash)) {
+          state.trash = {};
+          Object.keys(data.trash).forEach(id => { if (QMAP.has(id)) state.trash[id] = data.trash[id] || new Date().toISOString(); });
+          if (session) session.ids = session.ids.filter(id => !isTrashed(id));
         }
         saveState();
         render();
@@ -1173,6 +1401,14 @@ ${rows || '<p>暂无错题</p>'}
   }
 
   document.addEventListener('click', e => {
+    // 记忆标注弹窗：点击已标出的答案关键字取消该区间
+    const ak = e.target.closest('.akey[data-letter]');
+    if (ak && memoDraft) {
+      const letter = ak.dataset.letter, s = Number(ak.dataset.s), en = Number(ak.dataset.e);
+      const rest = (memoDraft.marks[letter] || []).filter(r => !(Number(r.s) === s && Number(r.e) === en));
+      if (rest.length) memoDraft.marks[letter] = rest; else delete memoDraft.marks[letter];
+      renderMemoBody(); toast('已取消该处关键点'); return;
+    }
     // 点击已标记的红色文字：移除该题对应区间
     const mk = e.target.closest('.qmark');
     if (mk) {
@@ -1218,6 +1454,16 @@ ${rows || '<p>暂无错题</p>'}
       toast(state.detailFlags[id] ? '已标注：需进一步解析' : '已取消标注');
       return;
     }
+    if (action === 'memo-edit') { openMemo(el.dataset.id); return; }
+    if (action === 'memo-close') { closeMemo(); return; }
+    if (action === 'memo-save') { saveMemo(); return; }
+    if (action === 'memo-clear') {
+      if (!memoDraft) return;
+      memoDraft.text = ''; memoDraft.marks = {}; renderMemoBody(); return;
+    }
+    if (action === 'copy-memo-list') { copyMemoList(); return; }
+    if (action === 'trash-delete') { trashQuestion(el.dataset.id); return; }
+    if (action === 'trash-restore') { restoreQuestion(el.dataset.id, false); return; }
     if (action === 'toggle-focus') { ui.focusMode = !ui.focusMode; render(); return; }
     if (action === 'study-skim') {
       startSession('study');
@@ -1285,7 +1531,7 @@ ${rows || '<p>暂无错题</p>'}
     }
     else if (action === 'reset-progress') {
       if (!confirm('确定清空全部进度、错题与收藏吗？此操作不可撤销。')) return;
-      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, marks: {}, showMarks: true, detailFlags: {}, marksVersion: 2, updatedAt: null };
+      state = { records: {}, study: { pos: 0, view: 'card', scope: 'all', pageSize: ui.studyPageSize }, marks: {}, showMarks: true, detailFlags: {}, marksVersion: 2, memos: {}, answerMarks: {}, trash: {}, updatedAt: null };
       ui.studyView = 'card'; ui.studyScope = 'all'; ui.studyPage = 0;
       session = null; saveState(); render(); toast('全部进度已清空');
     }
@@ -1339,10 +1585,25 @@ ${rows || '<p>暂无错题</p>'}
       ui.wrongQuery = e.target.value;
       const body = document.getElementById('wrongBody');
       if (body) body.innerHTML = wrongRowsHTML();
+    } else if (e.target.id === 'trashQueryInput') {
+      ui.trashQuery = e.target.value;
+      const card = e.target.closest('.card');
+      if (card) {
+        const kw = ui.trashQuery.trim().toLowerCase();
+        const candidates = activeIds().map(id => QMAP.get(id)).filter(q => {
+          if (!kw) return true;
+          return [q.no, q.id, q.bankId, q.question, ...LETTERS.map(l => q.options[l])].join(' ').toLowerCase().includes(kw);
+        }).slice(0, 60);
+        const box = card.querySelector('.manage-list');
+        if (box) box.innerHTML = candidates.map(q => `<div class="manage-row">
+          <span class="manage-title">${qNoHTML(q)} ${esc(q.question)}</span>
+          <button class="btn small danger" data-action="trash-delete" data-id="${esc(q.id)}">移入回收站</button>
+        </div>`).join('');
+      }
     } else if (e.target.id === 'searchInput') {
       ui.searchQuery = e.target.value;
       const kw = ui.searchQuery.trim().toLowerCase();
-      const results = kw ? QUESTIONS.filter(q => {
+      const results = kw ? activeIds().map(id => QMAP.get(id)).filter(q => {
         const hay = [q.id, q.bankId, q.section, q.question, ...LETTERS.map(l => q.options[l])].join(' ').toLowerCase();
         return hay.includes(kw);
       }).slice(0, 80) : [];
@@ -1356,8 +1617,79 @@ ${rows || '<p>暂无错题</p>'}
     e.target.value = '';
   });
 
+  // ===== 记忆标注编辑弹窗 =====
+  const memoModal = document.getElementById('memoModal');
+  let memoDraft = null; // {qid, text, marks:{原始字母:[{s,e}]}}
+
+  function openMemo(qid) {
+    const q = QMAP.get(qid);
+    if (!q || !memoModal) return;
+    memoDraft = {
+      qid: qid,
+      text: memoText(qid),
+      marks: JSON.parse(JSON.stringify((state.answerMarks && state.answerMarks[qid]) || {}))
+    };
+    const noEl = document.getElementById('memoNo');
+    if (noEl) noEl.textContent = q.no;
+    renderMemoBody();
+    memoModal.hidden = false;
+    document.body.classList.add('modal-open');
+  }
+
+  function closeMemo() {
+    memoDraft = null;
+    if (memoModal) memoModal.hidden = true;
+    document.body.classList.remove('modal-open');
+    if (markToolbarEl) markToolbarEl.hidden = true;
+  }
+
+  function renderMemoBody() {
+    if (!memoDraft || !memoModal) return;
+    const q = QMAP.get(memoDraft.qid);
+    const rows = dispLetters(q).filter(dl => isRight(q, dl)).map(dl => `
+      <div class="akey-row">
+        <span class="akey-letter">${dl}</span>
+        <div class="akey-text" data-answer-host="${esc(q.dispMap[dl])}" data-answer-qid="${esc(q.id)}">${answerMarkedHTML(q, dl, true, memoDraft.marks[q.dispMap[dl]] || [])}</div>
+      </div>`).join('');
+    const body = document.getElementById('memoBody');
+    body.innerHTML = `
+      <label class="memo-label" for="memoTextInput">记忆口诀 / 提醒</label>
+      <textarea id="memoTextInput" class="memo-textarea" rows="4" placeholder="例如：只有“XXX”是错的；选项关键字记忆——开头是：双，结尾是：绝">${esc(memoDraft.text)}</textarea>
+      <p class="memo-help">写给自己看的提示即可，不一定要完整句子。</p>
+      <label class="memo-label">答案记忆关键点 <small>在下面正确答案上划选文字，再点「标为记忆关键」</small></label>
+      <div class="akey-list">${rows}</div>
+      <p class="memo-help">已标出的关键字再点一下即可取消。</p>`;
+    const ta = document.getElementById('memoTextInput');
+    if (ta) { ta.value = memoDraft.text; ta.addEventListener('input', () => { if (memoDraft) memoDraft.text = ta.value; }); }
+  }
+
+  function saveMemo() {
+    if (!memoDraft) return;
+    const qid = memoDraft.qid, q = QMAP.get(qid);
+    const ta = document.getElementById('memoTextInput');
+    const text = String((ta && ta.value != null ? ta.value : memoDraft.text) || '').trim();
+    if (!state.memos) state.memos = {};
+    if (text) state.memos[qid] = text; else delete state.memos[qid];
+    if (!state.answerMarks) state.answerMarks = {};
+    const clean = {};
+    Object.keys(memoDraft.marks || {}).forEach(letter => {
+      const full = String((q.options || {})[letter] || '');
+      const rng = normalizeRanges(memoDraft.marks[letter], full.length);
+      if (rng.length) clean[letter] = rng;
+    });
+    if (Object.keys(clean).length) state.answerMarks[qid] = clean; else delete state.answerMarks[qid];
+    saveState();
+    closeMemo();
+    render();
+    toast(text || Object.keys(clean).length ? '记忆标注已保存' : '记忆标注已清空');
+  }
+
+  if (memoModal) {
+    memoModal.addEventListener('click', e => { if (e.target === memoModal) closeMemo(); });
+  }
+
   // ===== 题干标记交互：选中题干文字后弹出工具条 =====
-  let markSel = null; // {qid, s, e}
+  let markSel = null; // {qid, s, e} 或 {qid, letter, s, e, type:'answer'}
   let suppressHide = false; // 手指点在工具条上时不要因选区收起而误关工具条（移动端必备）
   let suppressTimer = null;
   const markToolbarEl = document.getElementById('markToolbar');
@@ -1376,24 +1708,28 @@ ${rows || '<p>暂无错题</p>'}
   function onSelectionChange() {
     if (!markToolbarEl) return;
     if (suppressHide) return; // 正在点工具条，保留当前选区与工具条
-    // 仅在练习/学习视图显示标记工具条
-    if (view !== 'practice' || !session) { hideMarkToolbar(); return; }
     const sel = window.getSelection && window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { hideMarkToolbar(); return; }
     const range = sel.getRangeAt(0);
     let node = range.startContainer;
     if (node.nodeType !== 1) node = node.parentElement;
-    const host = node && node.closest ? node.closest('[data-qmark-host]') : null;
+    const answerHost = node && node.closest ? node.closest('[data-answer-host]') : null;
+    const qHost = node && node.closest ? node.closest('[data-qmark-host]') : null;
+    const host = answerHost || qHost;
     if (!host) { hideMarkToolbar(); return; }
-    // 确保选区起止都在同一题干容器内
+    // 题干标记只在练习视图生效；答案关键点只在记忆标注弹窗内生效
+    if (answerHost ? !memoDraft : (view !== 'practice' || !session)) { hideMarkToolbar(); return; }
+    // 确保选区起止都在同一容器内
     const endNode = range.endContainer.nodeType !== 1 ? range.endContainer.parentElement : range.endContainer;
     if (!endNode || !host.contains(range.endContainer)) { hideMarkToolbar(); return; }
-    const qid = host.dataset.qmarkHost;
     const off = selectionOffsets(host);
     if (!off) { hideMarkToolbar(); return; }
-    markSel = { qid: qid, s: off.s, e: off.e };
+    if (answerHost) markSel = { qid: host.dataset.answerQid, letter: host.dataset.answerHost, s: off.s, e: off.e, type: 'answer' };
+    else markSel = { qid: host.dataset.qmarkHost, s: off.s, e: off.e, type: 'question' };
     const hint = markToolbarEl.querySelector('.mt-hint');
     if (hint) hint.textContent = `已选中 ${off.e - off.s} 字`;
+    const addBtn = markToolbarEl.querySelector('[data-mark-action="add"]');
+    if (addBtn) addBtn.textContent = answerHost ? '标为记忆关键' : '标红关键内容';
     markToolbarEl.hidden = false;
     // 定位到选区下方；下方放不开时改为选区上方，避免被屏幕边缘截断
     try {
@@ -1421,6 +1757,17 @@ ${rows || '<p>暂无错题</p>'}
       const action = btn.dataset.markAction;
       if (action === 'cancel') { suppressHide = false; hideMarkToolbar(); const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges(); return; }
       if (action === 'add' && markSel) {
+        if (markSel.type === 'answer') {
+          if (!memoDraft || memoDraft.qid !== markSel.qid) { hideMarkToolbar(); return; }
+          const q = QMAP.get(markSel.qid);
+          const full = String((q.options || {})[markSel.letter] || '');
+          const cur = memoDraft.marks[markSel.letter] || [];
+          memoDraft.marks[markSel.letter] = normalizeRanges(cur.concat([{ s: markSel.s, e: markSel.e }]), full.length);
+          const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges();
+          suppressHide = false; hideMarkToolbar(); renderMemoBody();
+          toast('已标记为答案记忆关键点');
+          return;
+        }
         if (!state.marks) state.marks = {};
         const next = getMarks(markSel.qid).concat([{ s: markSel.s, e: markSel.e }]);
         state.marks[markSel.qid] = normalizeRanges(next, (QMAP.get(markSel.qid) || {}).question?.length || 1e9);
