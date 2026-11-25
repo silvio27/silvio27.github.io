@@ -614,8 +614,16 @@
       }
       const mark = submitted && isRight(q, letter)
         ? `<span class="answer-flag">✓ 正确答案</span>` : '';
-      const bodyHTML = submitted && isRight(q, letter) ? answerMarkedHTML(q, letter, false) : esc(q.disp[letter]);
-      return `<button class="${cls}" data-action="toggle-option" data-letter="${letter}" ${submitted ? 'disabled' : ''}>
+      // 答完后正确答案文字放进可划选的容器，可直接划词标为记忆关键点
+      const bodyHTML = submitted && isRight(q, letter)
+        ? `<span class="akey-inline" data-answer-host="${esc(q.dispMap[letter])}" data-answer-qid="${esc(q.id)}">${answerMarkedHTML(q, letter, false)}</span>`
+        : esc(q.disp[letter]);
+      if (submitted) {
+        return `<div class="${cls}" role="group">
+        <span class="letter">${letter}</span><span class="body">${bodyHTML}${mark}</span>
+      </div>`;
+      }
+      return `<button class="${cls}" data-action="toggle-option" data-letter="${letter}">
         <span class="letter">${letter}</span><span class="body">${bodyHTML}${mark}</span>
       </button>`;
     }).join('');
@@ -643,9 +651,12 @@
         <div class="options no-letter">${optionsHTML}</div>
         ${submitted ? explanationHTML(q, true) : ''}
         ${submitted ? memoBoxHTML(q) : ''}
-        ${submitted ? `<div class="trash-quick">
-          <span>这题以后不用再练了？</span>
-          <button class="btn small danger" data-action="trash-current">移入垃圾桶</button>
+        ${submitted ? `<div class="after-actions">
+          <div class="aa-hint">在正确答案里划选关键词，可直接标为记忆关键点</div>
+          <div class="btn-row">
+            <button class="btn small" data-action="memo-edit" data-id="${esc(q.id)}">＋ 记忆标注</button>
+            <button class="btn small danger" data-action="trash-current">移入垃圾桶</button>
+          </div>
         </div>` : ''}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
@@ -1746,8 +1757,10 @@ ${rows || '<p>暂无错题</p>'}
     const qHost = node && node.closest ? node.closest('[data-qmark-host]') : null;
     const host = answerHost || qHost;
     if (!host) { hideMarkToolbar(); return; }
-    // 题干标记只在练习视图生效；答案关键点只在记忆标注弹窗内生效
-    if (answerHost ? !memoDraft : (view !== 'practice' || !session)) { hideMarkToolbar(); return; }
+    // 答案关键点：记忆标注弹窗内可标；练习页答完后也可直接在正确答案上划选
+    const inMemo = !!(answerHost && memoDraft && memoDraft.qid === answerHost.dataset.answerQid);
+    const inAnswered = !!(answerHost && view === 'practice' && session && session.submitted[answerHost.dataset.answerQid]);
+    if (answerHost ? !(inMemo || inAnswered) : (view !== 'practice' || !session)) { hideMarkToolbar(); return; }
     // 确保选区起止都在同一容器内
     const endNode = range.endContainer.nodeType !== 1 ? range.endContainer.parentElement : range.endContainer;
     if (!endNode || !host.contains(range.endContainer)) { hideMarkToolbar(); return; }
@@ -1787,14 +1800,37 @@ ${rows || '<p>暂无错题</p>'}
       if (action === 'cancel') { suppressHide = false; hideMarkToolbar(); const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges(); return; }
       if (action === 'add' && markSel) {
         if (markSel.type === 'answer') {
-          if (!memoDraft || memoDraft.qid !== markSel.qid) { hideMarkToolbar(); return; }
           const q = QMAP.get(markSel.qid);
-          const full = String((q.options || {})[markSel.letter] || '');
-          const cur = memoDraft.marks[markSel.letter] || [];
-          memoDraft.marks[markSel.letter] = normalizeRanges(cur.concat([{ s: markSel.s, e: markSel.e }]), full.length);
+          if (!q) { hideMarkToolbar(); return; }
+          const letter = markSel.letter;
+          const full = String((q.options || {})[letter] || '');
+          if (memoDraft && memoDraft.qid === markSel.qid) {
+            const cur = memoDraft.marks[letter] || [];
+            memoDraft.marks[letter] = normalizeRanges(cur.concat([{ s: markSel.s, e: markSel.e }]), full.length);
+            const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges();
+            suppressHide = false; hideMarkToolbar(); renderMemoBody();
+            toast('已标记为答案记忆关键点');
+            return;
+          }
+          // 练习页答完后直接写入，无需打开弹窗
+          if (!state.answerMarks) state.answerMarks = {};
+          const byLetter = state.answerMarks[q.id] || {};
+          const prev = (byLetter[letter] || []).slice();
+          byLetter[letter] = normalizeRanges(prev.concat([{ s: markSel.s, e: markSel.e }]), full.length);
+          state.answerMarks[q.id] = byLetter;
+          saveState();
           const s = window.getSelection(); if (s && s.removeAllRanges) s.removeAllRanges();
-          suppressHide = false; hideMarkToolbar(); renderMemoBody();
-          toast('已标记为答案记忆关键点');
+          suppressHide = false; hideMarkToolbar(); render();
+          toast('已标为答案记忆关键点', {
+            label: '撤回', onAction: () => {
+              if (!state.answerMarks) state.answerMarks = {};
+              const bl = Object.assign({}, state.answerMarks[q.id] || {});
+              if (prev.length) bl[letter] = prev; else delete bl[letter];
+              if (Object.keys(bl).length) state.answerMarks[q.id] = bl; else delete state.answerMarks[q.id];
+              saveState(); render();
+              toast('已撤回该记忆点');
+            }
+          });
           return;
         }
         if (!state.marks) state.marks = {};
