@@ -173,9 +173,10 @@
       .sort((a, b) => new Date(state.records[b].lastAt || 0) - new Date(state.records[a].lastAt || 0));
   }
 
-  // 智能练习：连续答对 2 次及以上视为已掌握，自动跳过
-  function isMastered(id) { return ((state.records[id] || {}).streak || 0) >= 2; }
-  function smartIds() { return activeIds().filter(id => !isMastered(id)); }
+  // 智能练习：跳过所有已经作答过的题（不论对错），只推没做过的题
+  function isAnswered(id) { return ((state.records[id] || {}).attempts || 0) > 0; }
+  function smartIds() { return activeIds().filter(id => !isAnswered(id)); }
+  function unansweredCount() { return smartIds().length; }
 
   // ===== 回收站：被删除的题目不进入任何刷题/速览/检索范围 =====
   function isTrashed(id) { return !!(state.trash && state.trash[id]); }
@@ -464,7 +465,7 @@
     const wrongN = wrongIds().length;
     const activeCount = activeIds().length;
     const everWrong = recs.filter(r => (r.wrongCount || 0) > 0).length;
-    const masteredN = activeIds().length - smartIds().length;
+    const unansweredN = unansweredCount();
     const skimmed = !!(state.study && state.study.skimmed);
     const flaggedN = Object.keys(state.detailFlags || {}).length;
     const fuIdx = firstUnansweredIdx(activeIds());
@@ -481,7 +482,7 @@
     else if (wrongN >= 5 && attempted > 0) recN = 3;
     const recText = {
       1: '先花十几分钟速览一遍，知道考什么、答案长什么样，不用刻意记。',
-      2: '按智能练习顺序刷题，答对两次的题会自动移出，越刷越少。',
+      2: '按智能练习顺序刷题，做过的题（不论对错）都会自动跳过，越刷越少。',
       3: `错题库还有 ${wrongN} 题待复习，连对两次就能彻底剔除。`,
       4: '用随机练习检验真实水平，再用速览快速回顾错题和收藏。'
     }[recN];
@@ -514,7 +515,7 @@
           <div><span>速览</span><b style="color:${skimmed ? 'var(--success)' : 'var(--muted)'}">${skimmed ? '已完成' : '未开始'}</b></div>
           <div><span>已练题目</span><b>${attempted} / ${activeCount}</b></div>
           <div><span>待复习错题</span><b style="color:${wrongN ? 'var(--danger)' : 'var(--success)'}">${wrongN}</b></div>
-          <div><span>已掌握</span><b style="color:var(--success)">${masteredN}</b></div>
+          <div><span>未答过</span><b style="color:${unansweredN ? 'var(--success)' : 'var(--muted)'}">${unansweredN}</b></div>
         </div>
         <div class="road-track">
           ${[s1, s2, s3, s4].map((st, i) => `<span class="road-node ${st}">${i + 1}</span>${i < 3 ? `<i class="road-line ${st === 'done' ? 'done' : ''}"></i>` : ''}`).join('')}
@@ -530,7 +531,7 @@
         ${step(1, s1, '速览一遍 · 建立印象', '一页 20 题滚动看题干和答案，只求眼熟、不求记住。先扫一遍，后面刷题会快很多。', `共 ${Math.ceil(activeCount / 20)} 页 · ${skimmed ? '已开始' : '未开始'}`, `
           <button class="btn primary" data-action="study-skim">进入速览 →</button>
           <button class="btn" data-action="start" data-mode="study">卡片背题</button>`)}
-        ${step(2, s2, '系统刷题 · 主力', '智能练习自动跳过已掌握的题，只练还没拿下的。单选点一下自动提交，多选选完提交；答错自动进错题库。', `已练 ${attempted} 题 · 正确率 ${acc === null ? '—' : acc + '%'}${nextNo ? ` · 下一道未答第 ${nextNo} 题` : ''}`, `
+        ${step(2, s2, '系统刷题 · 主力', '智能练习只推还没做过的题：做过的题不论对错都自动跳过。单选点一下自动提交，多选选完提交；答错自动进错题库。做完一题可随手放进垃圾桶，不再占练习范围。', `已练 ${attempted} 题 · 未答 ${unansweredN} 题 · 正确率 ${acc === null ? '—' : acc + '%'}${nextNo ? ` · 下一道未答第 ${nextNo} 题` : ''}`, `
           <button class="btn primary" data-action="start" data-mode="smart">智能练习 →</button>
           <button class="btn" data-action="start" data-mode="sequential">完整顺序</button>
           <span class="start-at">
@@ -594,7 +595,7 @@
     const selected = session.selected[qid] || [];
     const submitted = !!session.submitted[qid];
     const rec = getRec(qid);
-    const modeNames = { sequential: '顺序练习', random: '随机练习', chapter: `章节练习 · ${session.title || ''}`, wrong: '错题重练', review: '单题精练' };
+    const modeNames = { sequential: '顺序练习', smart: '智能练习', random: '随机练习', chapter: `章节练习 · ${session.title || ''}`, wrong: '错题重练', review: '单题精练' };
     const answered = Object.keys(session.submitted).length;
     const percent = session.ids.length ? Math.round(answered / session.ids.length * 100) : 0;
 
@@ -642,6 +643,10 @@
         <div class="options no-letter">${optionsHTML}</div>
         ${submitted ? explanationHTML(q, true) : ''}
         ${submitted ? memoBoxHTML(q) : ''}
+        ${submitted ? `<div class="trash-quick">
+          <span>这题以后不用再练了？</span>
+          <button class="btn small danger" data-action="trash-current">移入垃圾桶</button>
+        </div>` : ''}
         <div class="btn-row spread practice-actions" style="margin-top:20px">
           <div class="btn-row">
             <button class="btn" data-action="prev" ${session.pos === 0 ? 'disabled' : ''}>← 上一题</button>
@@ -1037,14 +1042,19 @@
     </div>`;
   }
 
+  let trashUndo = null; // 最近一次删除的位置，用于「撤回」时放回原处
   function trashQuestion(id) {
     const q = QMAP.get(id);
     if (!q || isTrashed(id)) return;
     state.trash[id] = new Date().toISOString();
+    let idx = -1;
     if (session) {
+      idx = session.ids.indexOf(id);
       session.ids = session.ids.filter(x => x !== id);
-      if (session.pos >= session.ids.length) session.pos = Math.max(0, session.ids.length - 1);
+      // 删掉当前题：后面一题自动补位；停在最后一题则进入本轮结果
+      if (idx >= 0 && idx < session.pos) session.pos = Math.max(0, session.pos - 1);
     }
+    trashUndo = { id, idx };
     saveState(); render();
     toast(`第 ${q.no} 题已移入回收站`, { label: '撤回', onAction: () => restoreQuestion(id, true) });
   }
@@ -1052,6 +1062,11 @@
   function restoreQuestion(id, undone) {
     if (!state.trash || !state.trash[id]) return;
     delete state.trash[id];
+    if (undone && trashUndo && trashUndo.id === id && session && session.mode !== 'study' && trashUndo.idx >= 0 && !session.ids.includes(id)) {
+      session.ids.splice(Math.min(trashUndo.idx, session.ids.length), 0, id);
+      if (trashUndo.idx < session.pos) session.pos++;
+    }
+    trashUndo = null;
     saveState(); render();
     const q = QMAP.get(id);
     toast(undone ? `已撤回，第 ${q ? q.no : ''} 题已恢复` : `第 ${q ? q.no : ''} 题已恢复`);
@@ -1165,7 +1180,16 @@
       if (!ids.length) { toast('该范围暂无题目，已切换到全部题目'); ui.studyScope = 'all'; ids = activeIds().slice(); }
     }
     else if (mode === 'review') ids = (opts.ids || (opts.id ? [opts.id] : [])).filter(id => !isTrashed(id));
-    if (!ids.length) { toast(mode === 'wrong' ? '错题库暂无待复习题目' : '没有可练习的题目'); return; }
+    if (!ids.length) {
+      if (mode === 'smart') {
+        toast(`智能练习已无未答过的题：在库 ${activeIds().length} 题都做过了`, {
+          label: '随机练习', onAction: () => startSession('random')
+        });
+        return;
+      }
+      toast(mode === 'wrong' ? '错题库暂无待复习题目' : '没有可练习的题目');
+      return;
+    }
     let initialPos = 0;
     let jumpNote = '';
     if (mode === 'study' && !opts.ids && state.study) {
@@ -1464,6 +1488,11 @@ ${rows || '<p>暂无错题</p>'}
     if (action === 'copy-memo-list') { copyMemoList(); return; }
     if (action === 'trash-delete') { trashQuestion(el.dataset.id); return; }
     if (action === 'trash-restore') { restoreQuestion(el.dataset.id, false); return; }
+    if (action === 'trash-current') {
+      if (!session || session.pos >= session.ids.length) return;
+      trashQuestion(session.ids[session.pos]);
+      return;
+    }
     if (action === 'toggle-focus') { ui.focusMode = !ui.focusMode; render(); return; }
     if (action === 'study-skim') {
       startSession('study');
