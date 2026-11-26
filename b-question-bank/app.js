@@ -85,7 +85,7 @@
   const STUDY_PAGE_SIZES = [10, 20, 50, 100, 'all'];
   const DEFAULT_STUDY_PAGE_SIZE = 20;
   const ui = {
-    wrongFilter: 'active', wrongQuery: '', searchQuery: '', trashQuery: '',
+    wrongFilter: 'active', wrongView: 'cards', wrongQuery: '', searchQuery: '', trashQuery: '',
     focusMode: false, studyView: 'card', studyScope: 'all', studyPage: 0,
     studyPageSize: DEFAULT_STUDY_PAGE_SIZE
   };
@@ -908,12 +908,56 @@
     }).join('');
   }
 
+  // 错题库「背题卡」：直接列出题干与正确答案，答案文字可划选标记忆点
+  function wrongCardsHTML() {
+    const ids = filteredWrongIds();
+    if (!ids.length) {
+      return `<div class="empty-state"><div class="big">⚑</div><h3>没有符合条件的题目</h3><p>答错的题目会自动出现在这里。</p></div>`;
+    }
+    return ids.map(id => {
+      const q = QMAP.get(id), r = getRec(id) || {};
+      const answers = dispLetters(q).filter(dl => isRight(q, dl)).map(dl => `
+        <div class="akey-row">
+          <span class="wc-dot" aria-hidden="true"></span>
+          <div class="akey-text" data-answer-host="${esc(q.dispMap[dl])}" data-answer-qid="${esc(q.id)}">${answerMarkedHTML(q, dl, false)}</div>
+        </div>`).join('');
+      return `<div class="wc-card">
+        <div class="wc-head">
+          ${qNoHTML(q)}${typeTagHTML(q)}
+          <span class="wc-meta">错 ${r.wrongCount || 0} 次 · ${formatDate(r.wrongAt)}</span>
+          <span class="tag ${r.resolved ? 'blue' : 'red'}">${r.resolved ? '已掌握' : '待复习'}</span>
+        </div>
+        <div class="wc-q"><span data-qmark-host="${esc(q.id)}">${questionTextHTML(q)}</span></div>
+        ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
+        <div class="wc-label">正确答案 · 划选其中关键词即可标为记忆点</div>
+        <div class="akey-list">${answers}</div>
+        ${memoBoxHTML(q)}
+        ${EXPLANATIONS[q.id] ? `<details class="wc-exp"><summary>查看解析</summary><div>${esc(EXPLANATIONS[q.id])}</div></details>` : ''}
+        <div class="btn-row wc-actions">
+          <button class="btn small primary" data-action="memo-edit" data-id="${esc(q.id)}">＋ 记忆标注</button>
+          <button class="btn small" data-action="review-wrong" data-id="${esc(q.id)}">练习</button>
+          ${r.resolved
+            ? `<button class="btn small ghost" data-action="restore-wrong" data-id="${esc(id)}">恢复</button>`
+            : `<button class="btn small ghost" data-action="remove-wrong" data-id="${esc(id)}">移除</button>`}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function wrongListHTML() {
+    if (ui.wrongView === 'cards') return `<div class="wc-list">${wrongCardsHTML()}</div>`;
+    return `<div class="table-wrap"><table>
+      <thead><tr><th>题目</th><th>章节</th><th>题型</th><th>错误次数</th><th>最近错误</th><th>操作</th></tr></thead>
+      <tbody id="wrongBody">${wrongRowsHTML()}</tbody>
+    </table></div>`;
+  }
+
   function renderWrong() {
     const active = wrongIds().length, mastered = masteredIds().length;
     return `<div class="view">
       <section class="card">
         <div class="card-header">
-          <div><h2>错题库</h2><p>答错自动收录；在“错题重练”中连续答对两次会自动标记已掌握</p></div>
+          <div><h2>错题库</h2><p>答错自动收录。背题卡直接展示正确答案，可在答案和题干上划选关键词做记忆标注；连续答对两次自动标记已掌握</p></div>
           <div class="btn-row">
             <button class="btn primary" data-action="start" data-mode="wrong" ${active ? '' : 'disabled'}>开始错题练习</button>
             <button class="btn" data-action="export-html">生成错题库网页</button>
@@ -933,14 +977,15 @@
             <button class="btn ${ui.wrongFilter === 'mastered' ? 'primary' : ''}" data-action="wrong-filter" data-filter="mastered">已掌握 ${mastered}</button>
             <button class="btn ${ui.wrongFilter === 'all' ? 'primary' : ''}" data-action="wrong-filter" data-filter="all">全部</button>
           </div>
-          <div class="search-box" style="flex:0 1 320px">
-            <input type="search" id="wrongQueryInput" value="${esc(ui.wrongQuery)}" placeholder="在错题中搜索…">
+          <div class="btn-row">
+            <button class="btn small ${ui.wrongView === 'cards' ? 'primary' : ''}" data-action="wrong-view" data-view="cards">▤ 背题卡</button>
+            <button class="btn small ${ui.wrongView === 'table' ? 'primary' : ''}" data-action="wrong-view" data-view="table">☰ 表格</button>
+            <div class="search-box" style="flex:0 1 240px">
+              <input type="search" id="wrongQueryInput" value="${esc(ui.wrongQuery)}" placeholder="在错题中搜索…">
+            </div>
           </div>
         </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>题目</th><th>章节</th><th>题型</th><th>错误次数</th><th>最近错误</th><th>操作</th></tr></thead>
-          <tbody id="wrongBody">${wrongRowsHTML()}</tbody>
-        </table></div>
+        <div id="wrongList">${wrongListHTML()}</div>
         <p class="section-note" style="margin-top:12px">提示：生成的错题库网页为独立 HTML；若错题含附图，请把 images 文件夹与该 HTML 放在同一目录。</p>
       </section>
       ${active + mastered ? `<section class="card"><div class="card-header"><div><h2>危险操作</h2></div></div>
@@ -1555,6 +1600,7 @@ ${rows || '<p>暂无错题</p>'}
       toast(rec.starred ? '已收藏本题' : '已取消收藏');
     }
     else if (action === 'wrong-filter') { ui.wrongFilter = el.dataset.filter; render(); }
+    else if (action === 'wrong-view') { ui.wrongView = el.dataset.view; render(); }
     else if (action === 'review-wrong' || action === 'review-result') startSession('review', { id: el.dataset.id });
     else if (action === 'remove-wrong') {
       const rec = getRec(el.dataset.id);
@@ -1623,8 +1669,8 @@ ${rows || '<p>暂无错题</p>'}
   document.addEventListener('input', e => {
     if (e.target.id === 'wrongQueryInput') {
       ui.wrongQuery = e.target.value;
-      const body = document.getElementById('wrongBody');
-      if (body) body.innerHTML = wrongRowsHTML();
+      const list = document.getElementById('wrongList');
+      if (list) list.innerHTML = wrongListHTML();
     } else if (e.target.id === 'trashQueryInput') {
       ui.trashQuery = e.target.value;
       const card = e.target.closest('.card');
@@ -1757,10 +1803,12 @@ ${rows || '<p>暂无错题</p>'}
     const qHost = node && node.closest ? node.closest('[data-qmark-host]') : null;
     const host = answerHost || qHost;
     if (!host) { hideMarkToolbar(); return; }
-    // 答案关键点：记忆标注弹窗内可标；练习页答完后也可直接在正确答案上划选
+    // 答案关键点：记忆弹窗内、练习页答完后、错题库背题卡上都可直接划选
+    const inWrong = view === 'wrong';
     const inMemo = !!(answerHost && memoDraft && memoDraft.qid === answerHost.dataset.answerQid);
     const inAnswered = !!(answerHost && view === 'practice' && session && session.submitted[answerHost.dataset.answerQid]);
-    if (answerHost ? !(inMemo || inAnswered) : (view !== 'practice' || !session)) { hideMarkToolbar(); return; }
+    const qAllowed = inWrong || (view === 'practice' && !!session);
+    if (answerHost ? !(inMemo || inAnswered || inWrong) : !qAllowed) { hideMarkToolbar(); return; }
     // 确保选区起止都在同一容器内
     const endNode = range.endContainer.nodeType !== 1 ? range.endContainer.parentElement : range.endContainer;
     if (!endNode || !host.contains(range.endContainer)) { hideMarkToolbar(); return; }

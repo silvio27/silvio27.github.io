@@ -582,6 +582,22 @@ mark.akey { background: #fef3c7; color: #92400e; border-radius: 3px; padding: 0 
 .manage-title small { display: block; font-size: 11.5px; color: var(--muted); }
 .toast-action { margin-left: 12px; border: 0; background: transparent; color: #93c5fd; font-weight: 700; font-size: 13px; cursor: pointer; text-decoration: underline; }
 
+/* ===== 错题库背题卡：答案可直接划词标注 ===== */
+.wc-list { display: grid; gap: 12px; }
+.wc-card { border: 1px solid var(--border); border-radius: 11px; padding: 13px 14px; background: var(--surface); }
+.wc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.wc-meta { flex: 1 1 auto; font-size: 11.5px; color: var(--muted); }
+.wc-q { font-size: 14.5px; line-height: 1.8; word-break: break-word; }
+.wc-label { margin: 12px 0 7px; font-size: 12px; font-weight: 700; color: var(--success); }
+.wc-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-top: 9px; }
+.wc-card .akey-list { display: grid; gap: 6px; }
+.wc-card .akey-row { padding: 7px 10px; background: var(--success-soft); border-color: #a7f3d0; }
+.wc-card .akey-text { font-size: 14px; }
+.wc-exp { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 7px; font-size: 13px; }
+.wc-exp summary { cursor: pointer; color: var(--primary); }
+.wc-exp > div { margin-top: 6px; line-height: 1.75; white-space: pre-wrap; }
+.wc-actions { margin-top: 10px; }
+
 @media (max-width: 640px) {
   .modal-mask { padding: 8px; }
   .modal-card { max-height: 92vh; border-radius: 12px; }
@@ -591,4 +607,5 @@ mark.akey { background: #fef3c7; color: #92400e; border-radius: 3px; padding: 0 
   .memo-list-title, .manage-title { flex: 1 1 100%; }
   .study-list-qrow .memo-btn { margin-top: 1px; }
   .practice-bar .tag-row { flex-wrap: wrap; }
+  .wc-actions .btn { flex: 1 1 auto; }
 }
