@@ -921,6 +921,11 @@
           <span class="wc-dot" aria-hidden="true"></span>
           <div class="akey-text" data-answer-host="${esc(q.dispMap[dl])}" data-answer-qid="${esc(q.id)}">${answerMarkedHTML(q, dl, false)}</div>
         </div>`).join('');
+      // 多选题额外列出错误选项，便于用排除法背题；不显示字母，只标"排除项"
+      const excludes = q.type === 'multiple'
+        ? dispLetters(q).filter(dl => !isRight(q, dl)).map(dl => `
+          <div class="wc-exclude-row"><span class="wc-x" aria-hidden="true">×</span><span>${esc(q.disp[dl])}</span></div>`).join('')
+        : '';
       return `<div class="wc-card">
         <div class="wc-head">
           ${qNoHTML(q)}${typeTagHTML(q)}
@@ -931,6 +936,7 @@
         ${q.figure ? `<div class="figure-wrap"><img src="${figureSrc(q.figure)}" alt="题目附图"></div>` : ''}
         <div class="wc-label">正确答案 · 划选其中关键词即可标为记忆点</div>
         <div class="akey-list">${answers}</div>
+        ${excludes ? `<div class="wc-label wc-exclude-title">排除项 · 以下不是答案</div><div class="wc-excludes">${excludes}</div>` : ''}
         ${memoBoxHTML(q)}
         ${EXPLANATIONS[q.id] ? `<details class="wc-exp"><summary>查看解析</summary><div>${esc(EXPLANATIONS[q.id])}</div></details>` : ''}
         <div class="btn-row wc-actions">

@@ -593,6 +593,10 @@ mark.akey { background: #fef3c7; color: #92400e; border-radius: 3px; padding: 0 
 .wc-card .akey-list { display: grid; gap: 6px; }
 .wc-card .akey-row { padding: 7px 10px; background: var(--success-soft); border-color: #a7f3d0; }
 .wc-card .akey-text { font-size: 14px; }
+.wc-exclude-title { color: var(--muted); margin-top: 9px; }
+.wc-excludes { display: grid; gap: 5px; }
+.wc-exclude-row { display: flex; gap: 9px; align-items: flex-start; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--muted); font-size: 13.5px; line-height: 1.7; word-break: break-word; }
+.wc-x { flex: 0 0 auto; font-weight: 700; color: var(--danger); }
 .wc-exp { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 7px; font-size: 13px; }
 .wc-exp summary { cursor: pointer; color: var(--primary); }
 .wc-exp > div { margin-top: 6px; line-height: 1.75; white-space: pre-wrap; }
